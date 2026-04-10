@@ -1,4 +1,4 @@
-.DS_Store
+# --- Swift / SPM ---
 /.build
 /Packages
 xcuserdata/
@@ -6,4 +6,24 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+Package.resolved
+
+# --- VS Code ---
+.vscode/
+*.code-workspace
+
+# --- Emacs ---
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# --- Project ---
 /Logs
+
+# --- macOS ---
+.DS_Store
