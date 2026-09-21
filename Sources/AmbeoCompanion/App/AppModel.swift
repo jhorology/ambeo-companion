@@ -143,7 +143,9 @@ final class AppModel: Sendable {
       await client.register(AmbeoEndpoint.Player.Mute())
       await client.register(AmbeoEndpoint.Audio.Preset())
       await client.register(AmbeoEndpoint.Audio.AmbeoMode())
-      await client.register(AmbeoEndpoint.Audio.AmbeoLevel(preset: "adaptive"))
+      for preset in AmbeoEndpoint.Audio.Preset.allPresets {
+        await client.register(AmbeoEndpoint.Audio.AmbeoLevel(preset: preset))
+      }
       await client.register(AmbeoEndpoint.Audio.NightMode())
       await client.register(AmbeoEndpoint.Audio.VoiceEnhancement())
       await client.register(AmbeoEndpoint.Audio.EcoMode())
@@ -366,12 +368,6 @@ final class AppModel: Sendable {
     Task { @MainActor [weak self] in
       guard let self, let client = self.ambeoClient else { return }
 
-      // Preset change: dynamically update ambeoLevel observation
-      if path == AmbeoEndpoint.Audio.Preset().path {
-        let preset = await client.state.preset
-        await client.register(AmbeoEndpoint.Audio.AmbeoLevel(preset: preset))
-      }
-
       // Decoder audio format change: detect Dolby Atmos from soundbar DSP
       if path == AmbeoEndpoint.Audio.DecoderAudioFormat().path {
         let soundbarAtmos = await client.state.audioFormat?.isAtmos == true
@@ -379,10 +375,26 @@ final class AppModel: Sendable {
       }
 
       // If change was triggered externally (remote control, hardware buttons, app),
-      // update state and display the OSD on screen!
+      // update state and display the OSD on screen for user-facing audio controls!
       if isExternal {
-        Logger.lifecycle.debug("External change detected on [\(path)]. Displaying synced OSD.")
-        await self.syncAndShowOverlay()
+        let currentPreset = await client.state.preset.lowercased()
+        let activeAmbeoLevelPath = "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(currentPreset)"
+        let osdEligiblePaths: Set<String> = [
+          AmbeoEndpoint.Player.Volume().path,
+          AmbeoEndpoint.Player.Mute().path,
+          AmbeoEndpoint.Audio.Preset().path,
+          AmbeoEndpoint.Audio.AmbeoMode().path,
+          AmbeoEndpoint.Audio.NightMode().path,
+          AmbeoEndpoint.Audio.VoiceEnhancement().path,
+          activeAmbeoLevelPath,
+        ]
+
+        if osdEligiblePaths.contains(path) {
+          Logger.lifecycle.debug("External change detected on [\(path)]. Displaying synced OSD.")
+          await self.syncAndShowOverlay()
+        } else {
+          Logger.lifecycle.debug("External change detected on [\(path)]. Suppressing OSD (not eligible).")
+        }
       }
     }
   }
@@ -587,7 +599,7 @@ final class AppModel: Sendable {
   func cycleAmbeoLevel() async {
     guard let client = ambeoClient else { return }
     let current = await client.state.ambeoLevel.lowercased()
-    let levels = ["light", "standard", "boost"]
+    let levels = AmbeoEndpoint.Audio.AmbeoLevel.allLevels
     let nextLevel: String
     if let idx = levels.firstIndex(of: current) {
       nextLevel = levels[(idx + 1) % levels.count]
@@ -598,15 +610,15 @@ final class AppModel: Sendable {
     let endpoint = AmbeoEndpoint.Audio.AmbeoLevel(preset: preset)
     try? await client.set(
       endpoint,
-      valueJSON: "{\"type\":\"string_\",\"string_\":\"\(nextLevel)\"}"
+      valueJSON: "{\"type\":\"popcornAmbeoModeLevel\",\"popcornAmbeoModeLevel\":\"\(nextLevel)\"}"
     )
-    Logger.audio.info("Shortcut: AMBEO Level -> \(nextLevel)")
+    Logger.audio.info("Shortcut: AMBEO Level (\(preset)) -> \(nextLevel)")
     await syncAndShowOverlay()
   }
 
   func cyclePreset() async {
     guard let client = ambeoClient else { return }
-    let presets = ["adaptive", "music", "movie", "news", "neutral", "sports"]
+    let presets = AmbeoEndpoint.Audio.Preset.allPresets
     let current = await client.state.preset.lowercased()
     let nextPreset: String
     if let idx = presets.firstIndex(of: current) {
@@ -616,9 +628,8 @@ final class AppModel: Sendable {
     }
     try? await client.set(
       AmbeoEndpoint.Audio.Preset(),
-      valueJSON: "{\"type\":\"string_\",\"string_\":\"\(nextPreset)\"}"
+      valueJSON: "{\"type\":\"popcornAudioPreset\",\"popcornAudioPreset\":\"\(nextPreset)\"}"
     )
-    await client.register(AmbeoEndpoint.Audio.AmbeoLevel(preset: nextPreset))
     Logger.audio.info("Shortcut: Preset -> \(nextPreset)")
     await syncAndShowOverlay()
   }

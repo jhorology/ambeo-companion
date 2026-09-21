@@ -134,12 +134,22 @@ public actor AmbeoClient {
       let p = newValue as? String
     {
       state.preset = p
+      if let level = state.ambeoLevels[p.lowercased()] {
+        state.ambeoLevel = level
+      }
     } else if path == "settings:/popcorn/audio/ambeoModeStatus", let m = newValue as? Bool {
       state.isAmbeoMode = m
     } else if path.hasPrefix("settings:/popcorn/audio/audioPresets/ambeoModeLevel_"),
       let l = newValue as? String
     {
-      state.ambeoLevel = l
+      let presetName = path.replacingOccurrences(
+        of: "settings:/popcorn/audio/audioPresets/ambeoModeLevel_",
+        with: ""
+      ).lowercased()
+      state.ambeoLevels[presetName] = l
+      if state.preset.lowercased() == presetName {
+        state.ambeoLevel = l
+      }
     } else if path == "settings:/popcorn/audio/nightModeStatus", let n = newValue as? Bool {
       state.isNightMode = n
     } else if path == "settings:/popcorn/audio/voiceEnhancement", let ve = newValue as? Bool {
@@ -342,6 +352,10 @@ public actor AmbeoClient {
     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
       let body = String(data: data, encoding: .utf8) ?? ""
       Logger.network.error("setData error: HTTP \(http.statusCode): \(body)")
+    } else {
+      if let single = try? decoder.decode(AmbeoEntry<E>.self, from: data), let v = single.value {
+        updateState(path: endpoint.path, newValue: v)
+      }
     }
   }
 }

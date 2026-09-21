@@ -44,6 +44,9 @@ public enum AmbeoEndpoint {
     public struct Preset: AmbeoEndpointProtocol {
       public typealias Payload = String
       public let path = "settings:/popcorn/audio/audioPresets/audioPreset"
+      public static let allPresets: [String] = [
+        "adaptive", "music", "movie", "news", "neutral", "sports",
+      ]
 
       public struct Edit: Decodable, Sendable {
         public let enumPath: String?
@@ -63,6 +66,8 @@ public enum AmbeoEndpoint {
       public typealias Payload = String
       public typealias Edit = NoEdit
       public let path: String
+      public static let allLevels: [String] = ["light", "standard", "boost"]
+
       public init(preset: String = "adaptive") {
         self.path = "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(preset)"
       }

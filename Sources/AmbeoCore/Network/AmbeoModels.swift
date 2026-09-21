@@ -113,6 +113,7 @@ public struct AmbeoState: Equatable, Sendable {
   public var preset: String = "adaptive"
   public var isAmbeoMode: Bool = true
   public var ambeoLevel: String = "standard"
+  public var ambeoLevels: [String: String] = [:]
   public var isNightMode: Bool = false
   public var isVoiceEnhancement: Bool = false
   public var isEcoMode: Bool = false
@@ -126,6 +127,7 @@ public struct AmbeoState: Equatable, Sendable {
     preset: String = "adaptive",
     isAmbeoMode: Bool = true,
     ambeoLevel: String = "standard",
+    ambeoLevels: [String: String] = [:],
     isNightMode: Bool = false,
     isVoiceEnhancement: Bool = false,
     isEcoMode: Bool = false,
@@ -138,6 +140,7 @@ public struct AmbeoState: Equatable, Sendable {
     self.preset = preset
     self.isAmbeoMode = isAmbeoMode
     self.ambeoLevel = ambeoLevel
+    self.ambeoLevels = ambeoLevels
     self.isNightMode = isNightMode
     self.isVoiceEnhancement = isVoiceEnhancement
     self.isEcoMode = isEcoMode
