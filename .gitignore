@@ -24,6 +24,8 @@ tramp
 
 # --- Project ---
 /Logs
+AmbeoCompanion.app
+*.app
 
 # --- macOS ---
 .DS_Store

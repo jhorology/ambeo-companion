@@ -9,7 +9,8 @@ let package = Package(
     .macOS(.v14)
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-log.git", from: "1.10.1")
+    .package(url: "https://github.com/apple/swift-log.git", from: "1.15.1"),
+    .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "2.0.0"),
   ],
   targets: [
     // Core
@@ -24,8 +25,12 @@ let package = Package(
     // Targets can depend on other targets in this package and products from dependencies.
     .executableTarget(
       name: "AmbeoCompanion",
-      dependencies: ["AmbeoCore"],
-      path: "Sources/AmbeoCompanion"
+      dependencies: [
+        "AmbeoCore",
+        .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+      ],
+      path: "Sources/AmbeoCompanion",
+      exclude: ["Info.plist", "Resources"]
     ),
     .executableTarget(
       name: "DiscoverAmbeo",

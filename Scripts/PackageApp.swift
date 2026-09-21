@@ -9,17 +9,28 @@ let srcResources = "Sources/\(appName)/Resources"
 
 let fm = FileManager.default
 
-func shell(_ args: String...) {
+@discardableResult
+func shell(_ args: String...) -> Int32 {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
   process.arguments = args
   print("🛠  Running: \(args.joined(separator: " "))")
-  try? process.run()
-  process.waitUntilExit()
+  do {
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
+  } catch {
+    print("❌ Failed to run command: \(error)")
+    return 1
+  }
 }
 
 print("🚀 [1/4] Building Binary...")
-shell("swift", "build", "-c", "release", "--product", appName)
+let buildStatus = shell("swift", "build", "-c", "release", "--product", appName)
+if buildStatus != 0 {
+  print("❌ Build failed with exit code \(buildStatus)")
+  exit(buildStatus)
+}
 
 print("📦 [2/4] Creating Bundle Structure...")
 let execPath = "\(appBundle)/Contents/MacOS"
@@ -35,10 +46,22 @@ print("📂 [3/4] Copying Files...")
 try! fm.copyItem(atPath: "\(buildDir)/\(appName)", toPath: "\(execPath)/\(appName)")
 // Info.plist
 try! fm.copyItem(atPath: infoPlistSrc, toPath: "\(appBundle)/Contents/Info.plist")
-// Resources
+// Resources (AppIcon.icns, etc.)
 if let items = try? fm.contentsOfDirectory(atPath: srcResources) {
   for item in items {
-    try! fm.copyItem(atPath: "\(srcResources)/\(item)", toPath: "\(resPath)/\(item)")
+    let dest = "\(resPath)/\(item)"
+    try? fm.removeItem(atPath: dest)
+    try! fm.copyItem(atPath: "\(srcResources)/\(item)", toPath: dest)
+    print("  Copied resource: \(item)")
+  }
+}
+// SPM Dependency Bundles (e.g. KeyboardShortcuts_KeyboardShortcuts.bundle)
+if let buildItems = try? fm.contentsOfDirectory(atPath: buildDir) {
+  for item in buildItems where item.hasSuffix(".bundle") {
+    let dest = "\(resPath)/\(item)"
+    try? fm.removeItem(atPath: dest)
+    try! fm.copyItem(atPath: "\(buildDir)/\(item)", toPath: dest)
+    print("  Copied package bundle: \(item)")
   }
 }
 

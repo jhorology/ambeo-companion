@@ -1,49 +1,115 @@
 import Foundation
 
-protocol AmbeoEndpointProtocol {
-  associatedtype Response: Decodable
+public protocol AmbeoEndpointProtocol: Sendable {
+  associatedtype Payload: Decodable & Sendable
+  associatedtype Edit: Decodable & Sendable
   var path: String { get }
 }
 
-enum AmbeoEndpoint {
-  enum Player {
-    struct Volume: AmbeoEndpointProtocol {
-      typealias Response = Int
-      let path = "player:volume"
+public struct NoEdit: Decodable, Sendable {
+  public init() {}
+}
+
+public enum AmbeoEndpoint {
+  public enum Player {
+    public struct Volume: AmbeoEndpointProtocol {
+      public typealias Payload = Int
+      public let path = "player:volume"
+
+      public struct Edit: Decodable, Sendable {
+        @Stringified public var min: Int?
+        @Stringified public var max: Int?
+        @Stringified public var step: Int?
+      }
+
+      public init() {}
     }
-    struct Mute: AmbeoEndpointProtocol {
-      typealias Response = Bool
-      let path = "settings:/mediaPlayer/mute"
+
+    public struct Mute: AmbeoEndpointProtocol {
+      public typealias Payload = Bool
+      public typealias Edit = NoEdit
+      public let path = "settings:/mediaPlayer/mute"
+      public init() {}
     }
-    struct PlayData: AmbeoEndpointProtocol {
-      typealias Response = AmbeoPlayLogicData
-      let path = "player:player/data/value"
-    }
-    struct PlayTime: AmbeoEndpointProtocol {
-      typealias Response = Int64
-      let path = "player:player/data/playTime"
+
+    public struct PlayTime: AmbeoEndpointProtocol {
+      public typealias Payload = Int64
+      public typealias Edit = NoEdit
+      public let path = "player:player/data/playTime"
+      public init() {}
     }
   }
 
-  enum Audio {
-    struct Preset: AmbeoEndpointProtocol {
-      typealias Response = String
-      let path = "settings:/popcorn/audio/audioPresets/audioPreset"
+  public enum Audio {
+    public struct Preset: AmbeoEndpointProtocol {
+      public typealias Payload = String
+      public let path = "settings:/popcorn/audio/audioPresets/audioPreset"
+
+      public struct Edit: Decodable, Sendable {
+        public let enumPath: String?
+      }
+
+      public init() {}
     }
-    struct AmbeoMode: AmbeoEndpointProtocol {
-      typealias Response = Bool
-      let path = "settings:/popcorn/audio/ambeoModeStatus"
+
+    public struct AmbeoMode: AmbeoEndpointProtocol {
+      public typealias Payload = Bool
+      public typealias Edit = NoEdit
+      public let path = "settings:/popcorn/audio/ambeoModeStatus"
+      public init() {}
+    }
+
+    public struct AmbeoLevel: AmbeoEndpointProtocol {
+      public typealias Payload = String
+      public typealias Edit = NoEdit
+      public let path: String
+      public init(preset: String = "adaptive") {
+        self.path = "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(preset)"
+      }
+    }
+
+    public struct NightMode: AmbeoEndpointProtocol {
+      public typealias Payload = Bool
+      public typealias Edit = NoEdit
+      public let path = "settings:/popcorn/audio/nightModeStatus"
+      public init() {}
+    }
+
+    public struct VoiceEnhancement: AmbeoEndpointProtocol {
+      public typealias Payload = Bool
+      public typealias Edit = NoEdit
+      public let path = "settings:/popcorn/audio/voiceEnhancement"
+      public init() {}
+    }
+
+    public struct EcoMode: AmbeoEndpointProtocol {
+      public typealias Payload = Bool
+      public typealias Edit = NoEdit
+      public let path = "uipopcorn:ecoModeState"
+      public init() {}
+    }
+
+    public struct DecoderAudioFormat: AmbeoEndpointProtocol {
+      public typealias Payload = AmbeoAudioFormat
+      public typealias Edit = NoEdit
+      public let path = "imx8af:decoderAudioFormat"
+      public init() {}
     }
   }
 
-  enum System {
-    struct Power: AmbeoEndpointProtocol {
-      typealias Response = AmbeoPowerTarget
-      let path = "powermanager:target"
+  public enum System {
+    public struct Power: AmbeoEndpointProtocol {
+      public typealias Payload = AmbeoPowerTarget
+      public typealias Edit = NoEdit
+      public let path = "powermanager:target"
+      public init() {}
     }
-    struct ProductName: AmbeoEndpointProtocol {
-      typealias Response = String
-      let path = "settings:/system/productName"
+
+    public struct MaxIdleTime: AmbeoEndpointProtocol {
+      public typealias Payload = Int
+      public typealias Edit = NoEdit
+      public let path = "settings:/system/maxIdleTime"
+      public init() {}
     }
   }
 }

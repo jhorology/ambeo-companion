@@ -21,16 +21,18 @@ public enum LogManager {
       .appendingPathComponent("Logs")
       .appendingPathComponent("ambeo-companion.log")
     #else
-    // ~/Library/Logs/<Bundle ID>/amebeo-companion.log
-    try! fileManager.default.url(
-      for: .libraryDirectory,
-      in: .userDomainMask,
-      appropriateFor: nil,
-      create: true
-    )
-    .appendingPathComponent("Logs")
-    .appendingPathComponent(bundleId!)
-    .appendingPathComponent("amebeo-companion.log")
+    // ~/Library/Logs/<Bundle ID>/ambeo-companion.log
+    let bid = bundleId ?? Bundle.main.bundleIdentifier ?? "io.github.jhorology.AmbeoCompanion"
+    let logsDir =
+      (try? FileManager.default.url(
+        for: .libraryDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+      ))?.appendingPathComponent("Logs").appendingPathComponent(bid)
+      ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Logs/\(bid)")
+    try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+    return logsDir.appendingPathComponent("ambeo-companion.log")
     #endif
   }
 

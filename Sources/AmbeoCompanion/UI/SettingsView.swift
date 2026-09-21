@@ -1,56 +1,30 @@
 import AmbeoCore
+import KeyboardShortcuts
 import SwiftUI
 
-// A lightweight ViewModel to provide dynamic lists to the Settings UI
-@MainActor
-final class SettingsViewModel: ObservableObject {
-  @Published var ambeoNetDevices: [AmbeoNetworkDevice] = []
-  @Published var availableAudioDevices: [AudioDevice] = []
-  @Published var supportedFormats: [AudioPhysicalFormat] = []
-
-  init() { refreshDevices() }
-
-  func refreshDevices() {
-    availableAudioDevices = AudioDeviceMonitor.shared.allOutputDevices
-  }
-
-  func updateFormats(for deviceUID: String) {
-    if let selectedDevice = availableAudioDevices.first(where: { $0.uid == deviceUID }) {
-      supportedFormats = AudioDeviceMonitor.shared.supportedFormats(for: selectedDevice.id)
-    }
-  }
-
-  func fallbackAudio(to formatID: String, for deviceUID: String) {
-    guard let format = supportedFormats.first(where: { $0.id == formatID }) else { return }
-    guard let device = availableAudioDevices.first(where: { $0.uid == deviceUID }) else { return }
-    AudioDeviceMonitor.shared.fallback(format: format, for: device.id)
-  }
-}
-
 struct SettingsView: View {
-  @Environment(AmbeoAppModel.self) private var appModel
-  @StateObject private var viewModel = SettingsViewModel()
+  @Environment(AppModel.self) private var appModel
 
-  @AppStorage("AmbeoNetworkDeviceUID") private var ambeoNetDeviceUID: String = ""
-  @AppStorage("TargetAudioDeviceUID") private var targetAudioDeviceUID: String = ""
-  @AppStorage("FallbackAudioFormat") private var fallbackAudioFormat: String = ""
-  @AppStorage("HookMediaKeys") private var hookMediaKeys: Bool = true
-  @AppStorage("AtmosBoostAmount") private var atmosBoost: Double = 10
+  /// Dynamic lists that are not persisted
+  @State private var availableAudioDevices: [AudioDevice] = []
+  @State private var supportedFormats: [AudioPhysicalFormat] = []
 
   var body: some View {
+    @Bindable var model = appModel
+
     Form {
-      // --- Section 1: Network ---
+      // --- Section 1: Network Device ---
       Section {
         LabeledDescription(
           title: "AMBEO Soundbar",
           subtitle: "Choose the AMBEO Soundbar to control over your local network."
         ) {
-          Picker("", selection: $ambeoNetDeviceUID) {
-            if ambeoNetDeviceUID.isEmpty {
-              Text(appModel.discoveredDevices.isEmpty ? "Searching..." : "Select a device").tag("")
+          Picker("", selection: $model.settings.ambeoUid) {
+            if model.settings.ambeoUid.isEmpty {
+              Text(appModel.networkDevices.isEmpty ? "Searching..." : "Select a device").tag("")
             }
-            ForEach(appModel.discoveredDevices) { device in
-              Text(device.name).tag(device.id)
+            ForEach(appModel.networkDevices) { device in
+              Text(device.name).tag(device.uuid)
             }
           }
           .labelsHidden()
@@ -64,18 +38,18 @@ struct SettingsView: View {
         LabeledDescription(
           title: "Sound Output",
           subtitle:
-            "Choose the physical connection device for your AMBEO soundbar. If it's connected via eARC, it may be a display device."
+            "Choose the physical audio output for your AMBEO soundbar. If connected via eARC, this is typically the display's audio device."
         ) {
-          Picker("", selection: $targetAudioDeviceUID) {
-            if targetAudioDeviceUID.isEmpty {
+          Picker("", selection: $model.settings.audioDeviceUid) {
+            if model.settings.audioDeviceUid.isEmpty {
               Text("Select a device").tag("")
             }
-            ForEach(viewModel.availableAudioDevices) { device in
+            ForEach(availableAudioDevices) { device in
               Text(device.name).tag(device.uid)
             }
           }
-          .onChange(of: targetAudioDeviceUID) { _, newValue in
-            updateDefaultFormat(for: newValue)
+          .onChange(of: model.settings.audioDeviceUid) { _, newUID in
+            refreshFormats(for: newUID, current: model.settings.fallbackAudioFormatID)
           }
           .labelsHidden()
         }
@@ -83,22 +57,29 @@ struct SettingsView: View {
         LabeledDescription(
           title: "Fallback Format",
           subtitle:
-            "The format used when Dolby Atmos passthrough is inactive to prevent macOS from defaulting to 192kHz."
+            "Format applied when Dolby Atmos passthrough is inactive, preventing macOS from defaulting to 192 kHz."
         ) {
-          Picker("", selection: $fallbackAudioFormat) {
-            ForEach(viewModel.supportedFormats) { format in
+          Picker("", selection: $model.settings.fallbackAudioFormatID) {
+            ForEach(supportedFormats) { format in
               Text(format.displayName).tag(format.id)
             }
           }
-          .disabled(viewModel.supportedFormats.isEmpty)
+          .disabled(supportedFormats.isEmpty)
           .labelsHidden()
         }
+
         #if DEBUG
         LabeledDescription(title: "Fallback Test", subtitle: "") {
           Button("Execute", systemImage: "ladybug.circle") {
-            viewModel.fallbackAudio(to: fallbackAudioFormat, for: targetAudioDeviceUID)
+            applyFallbackNow(
+              formatID: model.settings.fallbackAudioFormatID,
+              deviceUID: model.settings.audioDeviceUid
+            )
           }
-          .disabled(fallbackAudioFormat.isEmpty || targetAudioDeviceUID.isEmpty)
+          .disabled(
+            model.settings.fallbackAudioFormatID.isEmpty
+              || model.settings.audioDeviceUid.isEmpty
+          )
         }
         #endif
       } header: {
@@ -108,23 +89,33 @@ struct SettingsView: View {
       // --- Section 3: Behavior ---
       Section {
         LabeledDescription(
+          title: "Launch at Login",
+          subtitle: "Automatically start Ambeo Companion when you log in to your Mac."
+        ) {
+          Toggle("", isOn: $model.isLaunchAtLoginEnabled)
+            .labelsHidden()
+            .toggleStyle(.switch)
+        }
+
+        LabeledDescription(
           title: "Media Key Interception",
           subtitle:
             "Allow this app to intercept Magic Keyboard media keys to synchronize volume with AMBEO."
         ) {
-          Toggle("", isOn: $hookMediaKeys)
+          Toggle("", isOn: $model.settings.mediaKeyEnabled)
             .labelsHidden()
             .toggleStyle(.switch)
         }
 
         LabeledDescription(
           title: "Atmos Boost",
-          subtitle: "Adjust the relative volume boost applied during Dolby Atmos playback."
+          subtitle:
+            "Volume offset automatically applied when switching between Dolby Atmos and stereo playback."
         ) {
           HStack {
-            Slider(value: $atmosBoost, in: 0...30, step: 1)
+            Slider(value: $model.settings.atmosBoostAmount, in: 0...40, step: 1)
               .frame(width: 150)
-            Text("\(Int(atmosBoost)) dB")
+            Text("\(Int(model.settings.atmosBoostAmount))%")
               .monospacedDigit()
               .frame(width: 45, alignment: .trailing)
           }
@@ -132,34 +123,106 @@ struct SettingsView: View {
       } header: {
         Text("Preferences")
       }
+
+      // --- Section 4: Shortcuts ---
+      Section {
+        LabeledDescription(
+          title: "AMBEO 3D Mode",
+          subtitle: "Toggle AMBEO 3D sound processing On or Off."
+        ) {
+          KeyboardShortcuts.Recorder(for: .toggleAmbeoMode)
+        }
+
+        LabeledDescription(
+          title: "AMBEO 3D Level",
+          subtitle: "Cycle through Light, Standard, and Boost intensity levels."
+        ) {
+          KeyboardShortcuts.Recorder(for: .cycleAmbeoLevel)
+        }
+
+        LabeledDescription(
+          title: "Audio Preset",
+          subtitle: "Cycle through Adaptive, Music, Movie, News, Neutral, and Sports."
+        ) {
+          KeyboardShortcuts.Recorder(for: .cyclePreset)
+        }
+
+        LabeledDescription(
+          title: "Night Mode",
+          subtitle: "Toggle dynamic range compression for late-night listening."
+        ) {
+          KeyboardShortcuts.Recorder(for: .toggleNightMode)
+        }
+
+        LabeledDescription(
+          title: "Voice Enhancement",
+          subtitle: "Toggle dialogue clarity enhancement."
+        ) {
+          KeyboardShortcuts.Recorder(for: .toggleVoiceEnhancement)
+        }
+      } header: {
+        Text("Shortcuts")
+      }
+
+      // --- Footer: Version ---
+      Section {
+        HStack {
+          Spacer()
+          let version =
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+          Text("Ambeo Companion v\(version)")
+            .font(.footnote)
+            .foregroundStyle(.tertiary)
+          Spacer()
+        }
+      }
+      .listRowBackground(Color.clear)
     }
     .formStyle(.grouped)
-    // .padding(0)
-    // .frame(width: 480)
     .onAppear {
-      updateDefaultFormat(for: targetAudioDeviceUID)
-    }
-    // ... (onAppear 類) ...
-  }
-
-  private func updateDefaultFormat(for uid: String) {
-    viewModel.updateFormats(for: uid)
-    if fallbackAudioFormat.isEmpty
-      || !viewModel.supportedFormats.contains(where: { $0.id == fallbackAudioFormat })
-    {
-      let format = viewModel.supportedFormats
-        .filter { $0.channels == 2 }
-        .sorted { a, b in
-          if a.sampleRate != b.sampleRate {
-            return a.distanceFrom48kHz < b.distanceFrom48kHz
-          }
-          return a.bitDepth > b.bitDepth
-        }.first
-      fallbackAudioFormat = format?.id ?? ""
+      availableAudioDevices = AudioDeviceMonitor.shared.allOutputDevices
+      refreshFormats(
+        for: appModel.settings.audioDeviceUid,
+        current: appModel.settings.fallbackAudioFormatID
+      )
     }
   }
 
+  // MARK: - Helpers
+
+  private func refreshFormats(for deviceUID: String, current currentID: String) {
+    guard let device = availableAudioDevices.first(where: { $0.uid == deviceUID }) else {
+      supportedFormats = []
+      return
+    }
+    supportedFormats = AudioDeviceMonitor.shared.supportedFormats(for: device.id)
+
+    // Auto-select best 2ch format near 48 kHz if current selection is gone
+    guard currentID.isEmpty || !supportedFormats.contains(where: { $0.id == currentID }) else {
+      return
+    }
+    let best =
+      supportedFormats
+      .filter { $0.channels == 2 }
+      .sorted {
+        if $0.sampleRate != $1.sampleRate { return $0.distanceFrom48kHz < $1.distanceFrom48kHz }
+        return $0.bitDepth > $1.bitDepth
+      }.first
+    if let id = best?.id {
+      appModel.settings.fallbackAudioFormatID = id
+    }
+  }
+
+  private func applyFallbackNow(formatID: String, deviceUID: String) {
+    guard
+      let device = availableAudioDevices.first(where: { $0.uid == deviceUID }),
+      let format = supportedFormats.first(where: { $0.id == formatID })
+    else { return }
+    AudioDeviceMonitor.shared.fallback(format: format, for: device.id)
+  }
 }
+
+// MARK: - Reusable label+description row
 
 private struct LabeledDescription<Content: View>: View {
   let title: String
@@ -176,7 +239,6 @@ private struct LabeledDescription<Content: View>: View {
           Text(subtitle)
             .font(.caption)
             .foregroundStyle(.secondary)
-            // 💡 文字が切れないように「固定サイズを解除」するのが Mac アプリのコツ
             .fixedSize(horizontal: false, vertical: true)
         }
       }
