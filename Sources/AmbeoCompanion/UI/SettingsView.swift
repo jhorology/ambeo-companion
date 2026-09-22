@@ -169,7 +169,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.3"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.4"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)
@@ -179,12 +179,14 @@ struct SettingsView: View {
       .listRowBackground(Color.clear)
     }
     .formStyle(.grouped)
-    .onAppear {
-      availableAudioDevices = AudioDeviceMonitor.shared.allOutputDevices
-      refreshFormats(
-        for: appModel.settings.audioDeviceUid,
-        current: appModel.settings.fallbackAudioFormatID
-      )
+    .task {
+      for await devices in AudioDeviceMonitor.shared.outputDevicesStream {
+        availableAudioDevices = devices
+        refreshFormats(
+          for: appModel.settings.audioDeviceUid,
+          current: appModel.settings.fallbackAudioFormatID
+        )
+      }
     }
   }
 

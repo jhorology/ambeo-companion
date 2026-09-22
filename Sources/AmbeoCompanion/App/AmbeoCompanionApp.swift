@@ -4,6 +4,7 @@ import SwiftUI
 
 struct AmbeoCompanionApp: App {
   @State private var appModel = AppModel()
+  @State private var didOfferDeviceSetup = false
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openURL) private var openURL
 
@@ -46,10 +47,12 @@ struct AmbeoCompanionApp: App {
       }
     }
     .menuBarExtraStyle(.menu)
-    .onChange(of: appModel.networkDevices) { _, _ in
-      if appModel.settings.ambeoUid.isEmpty {
-        openSettingsWindow()
+    .onChange(of: appModel.networkDevices) { _, devices in
+      guard appModel.settings.ambeoUid.isEmpty, !devices.isEmpty, !didOfferDeviceSetup else {
+        return
       }
+      didOfferDeviceSetup = true
+      openSettingsWindow()
     }
 
     Window("Settings", id: "settings-window") {

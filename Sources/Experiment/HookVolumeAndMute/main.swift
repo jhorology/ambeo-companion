@@ -40,7 +40,7 @@ class HookVolumeAndMute {
           return false
         }
         if let curDev = AudioDeviceMonitor.shared.currentDefaultDevice {
-          Logger.audio.debug("Currnt default device: [\(String(describing:curDev))].")
+          Logger.audio.debug("Current default device: [\(String(describing:curDev))].")
           if curDev.uid == audioDeviceUid {
             return true
           } else {
@@ -110,7 +110,7 @@ Logger.lifecycle.debug("Start")
 
 guard let babyface = audioDevice(startingWith: "Babyface Pro") else { exit(1) }
 Logger.lifecycle.debug(
-  "Currnt default auduio device is [\(String(describing:AudioDeviceMonitor.shared.currentDefaultDevice))]"
+  "Current default audio device is [\(String(describing:AudioDeviceMonitor.shared.currentDefaultDevice))]"
 )
 
 Task {
@@ -122,7 +122,7 @@ Task {
 
   guard let ambeo = audioDevice(startingWith: "AW3225QF") else { exit(1) }
   Logger.lifecycle.debug(
-    "Taget device is Hogged: \(String(describing:AudioDeviceMonitor.shared.checkHogged(for: ambeo.id)))"
+    "Target device is Hogged: \(String(describing:AudioDeviceMonitor.shared.checkHogged(for: ambeo.id)))"
   )
   test.audioDeviceUid = ambeo.uid
 }

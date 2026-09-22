@@ -13,6 +13,8 @@ public actor AmbeoClient {
   public private(set) var state = AmbeoState()
   public private(set) var isInitialSyncCompleted = false
 
+  /// Heterogeneous endpoint entries, keyed by path. Each path is registered once
+  /// with a single payload type; mismatched reads are logged in `getValue` / `getEntry`.
   private var stateCache: [String: Any] = [:]
   /// Tracks the most-recently-observed value for each registered path.
   private var latestValues: [String: Any] = [:]
@@ -101,20 +103,35 @@ public actor AmbeoClient {
     }
 
     updateHandlers[endpoint.path] = { [weak self] itemValueData in
-      guard let self = self else { return }
-      if let itemValueData {
-        if let container = try? self.decoder.decode(
+      await self?.applyPollUpdate(itemValueData, for: endpoint)
+    }
+  }
+
+  private func applyPollUpdate<E: AmbeoEndpointProtocol>(
+    _ itemValueData: Data?,
+    for endpoint: E
+  ) async {
+    if let itemValueData {
+      do {
+        let container = try decoder.decode(
           AmbeoValueContainer<E.Payload>.self,
           from: itemValueData
-        ) {
-          await self.notifyUpdate(path: endpoint.path, newValue: container.decodedValue)
-          return
-        }
+        )
+        notifyUpdate(path: endpoint.path, newValue: container.decodedValue)
+        return
+      } catch {
+        Logger.network.warning(
+          "Poll value decode failed for [\(endpoint.path)]: \(error.localizedDescription). Refetching."
+        )
       }
-      // Fallback: re-fetch if itemValue is absent or decode failed
-      if let refetched = await self.fetchDirectValue(for: endpoint) {
-        await self.notifyUpdate(path: endpoint.path, newValue: refetched)
-      }
+    }
+    // Fallback: re-fetch if itemValue is absent or decode failed
+    if let refetched = await fetchDirectValue(for: endpoint) {
+      notifyUpdate(path: endpoint.path, newValue: refetched)
+    } else if itemValueData != nil {
+      Logger.network.warning(
+        "Poll update for [\(endpoint.path)] could not be decoded or refetched."
+      )
     }
   }
 
@@ -145,11 +162,16 @@ public actor AmbeoClient {
     }
   }
 
+  /// Distinguishes values whose descriptions collide across types, such as `Int(1)` and `"1"`.
+  private func echoToken<V>(_ value: V) -> String {
+    "\(type(of: value)):\(value)"
+  }
+
   private func notifyUpdate<V>(path: String, newValue: V) {
     updateState(path: path, newValue: newValue)
 
     let notifPath = path
-    let valStr = "\(newValue)"
+    let valStr = echoToken(newValue)
     let isEcho = expectedEchoValues[path]?.contains(valStr) == true
     if isEcho {
       expectedEchoValues[path]?.remove(valStr)
@@ -181,10 +203,12 @@ public actor AmbeoClient {
       Logger.network.info(
         "AMBEO event observation loop started for \(self.registeredPaths.count) paths."
       )
+      var retryDelaySeconds: UInt64 = 3
       while isObserving {
         guard let qId = await setupAmbeoSubscription() else {
-          Logger.network.warning("Subscription failed. Retrying in 5s...")
-          try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+          Logger.network.warning("Subscription failed. Retrying in \(retryDelaySeconds)s...")
+          try? await Task.sleep(nanoseconds: retryDelaySeconds * 1_000_000_000)
+          retryDelaySeconds = min(retryDelaySeconds * 2, 60)
           continue
         }
 
@@ -211,19 +235,23 @@ public actor AmbeoClient {
             let (data, response) = try await session.data(for: request)
             if let http = response as? HTTPURLResponse, (400...599).contains(http.statusCode) {
               Logger.network.warning(
-                "pollQueue failed with HTTP \(http.statusCode). Re-establishing queue..."
+                "pollQueue failed with HTTP \(http.statusCode). Re-establishing queue in \(retryDelaySeconds)s..."
               )
+              try? await Task.sleep(nanoseconds: retryDelaySeconds * 1_000_000_000)
+              retryDelaySeconds = min(retryDelaySeconds * 2, 60)
               break
             }
             try await processPollResponse(data)
+            retryDelaySeconds = 3
           } catch let error as URLError where error.code == .timedOut {
             // Long-poll timed out normally on server side; continue polling on existing queue
             continue
           } catch {
             Logger.network.notice(
-              "Polling connection interrupted: \(error.localizedDescription). Reconnecting in 3s..."
+              "Polling connection interrupted: \(error.localizedDescription). Reconnecting in \(retryDelaySeconds)s..."
             )
-            try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: retryDelaySeconds * 1_000_000_000)
+            retryDelaySeconds = min(retryDelaySeconds * 2, 60)
             break
           }
         }
@@ -297,19 +325,51 @@ public actor AmbeoClient {
         let handler = updateHandlers[path]
       else { continue }
 
-      let itemValueDict = json["itemValue"] as? [String: Any]
-      let itemValueData = itemValueDict.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
-      try? await handler(itemValueData)
+      let itemValueData: Data?
+      if let itemValueDict = json["itemValue"] as? [String: Any] {
+        do {
+          itemValueData = try JSONSerialization.data(withJSONObject: itemValueDict)
+        } catch {
+          Logger.network.warning(
+            "Failed to serialize itemValue for [\(path)]: \(error.localizedDescription)"
+          )
+          itemValueData = nil
+        }
+      } else {
+        itemValueData = nil
+      }
+      do {
+        try await handler(itemValueData)
+      } catch {
+        Logger.network.warning(
+          "Poll handler failed for [\(path)]: \(error.localizedDescription)"
+        )
+      }
     }
   }
 
   public func getValue<E: AmbeoEndpointProtocol>(for endpoint: E) -> E.Payload? {
-    if let latest = latestValues[endpoint.path] as? E.Payload { return latest }
-    return (stateCache[endpoint.path] as? AmbeoEntry<E>)?.value
+    if let stored = latestValues[endpoint.path] {
+      guard let latest = stored as? E.Payload else {
+        Logger.network.error(
+          "Cached value type mismatch for [\(endpoint.path)]: stored \(type(of: stored)), expected \(E.Payload.self)"
+        )
+        return nil
+      }
+      return latest
+    }
+    return getEntry(for: endpoint)?.value
   }
 
   public func getEntry<E: AmbeoEndpointProtocol>(for endpoint: E) -> AmbeoEntry<E>? {
-    stateCache[endpoint.path] as? AmbeoEntry<E>
+    guard let cached = stateCache[endpoint.path] else { return nil }
+    guard let entry = cached as? AmbeoEntry<E> else {
+      Logger.network.error(
+        "Cached entry type mismatch for [\(endpoint.path)]: stored \(type(of: cached))"
+      )
+      return nil
+    }
+    return entry
   }
 
   /// Sets a value on a device path. Automatically includes required `role=value` parameter and cache buster.
@@ -331,6 +391,7 @@ public actor AmbeoClient {
 
     guard let url = components.url else { return }
     var request = URLRequest(url: url)
+    // AMBEO `/api/setData` takes the new value in the query string and expects GET.
     request.httpMethod = "GET"
 
     let (data, response) = try await session.data(for: request)
@@ -351,7 +412,7 @@ public actor AmbeoClient {
 
       if let v = updatedValue {
         updateState(path: endpoint.path, newValue: v)
-        expectedEchoValues[endpoint.path, default: []].insert("\(v)")
+        expectedEchoValues[endpoint.path, default: []].insert(echoToken(v))
       }
     }
   }

@@ -56,10 +56,21 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
 
   public var isAtmosOrMultichannel: Bool {
     channels > 2
-      || formatID == 1_836_344_180  // 'mat$' Dolby MAT 2.0
-      || formatID == 1_836_344_107  // 'mat+'
-      || formatID == 1_667_509_043  // 'cea3' Dolby Digital Plus
-      || formatID == 1_667_588_915  // 'cmlp' TrueHD
+      || formatID == EncodedAudioFormatID.dolbyMAT2
+      || formatID == EncodedAudioFormatID.dolbyMATPlus
+      || formatID == EncodedAudioFormatID.dolbyDigitalPlus
+      || formatID == EncodedAudioFormatID.trueHD
+  }
+}
+
+private enum EncodedAudioFormatID {
+  static let dolbyMAT2 = fourCC("mat$")
+  static let dolbyMATPlus = fourCC("mat+")
+  static let dolbyDigitalPlus = fourCC("cea3")
+  static let trueHD = fourCC("cmlp")
+
+  private static func fourCC(_ code: String) -> UInt32 {
+    code.utf8.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
   }
 }
 
@@ -122,6 +133,62 @@ public final class AudioDeviceMonitor: Sendable {
           &addr,
           listener,
           safeBridge  // safeBridgeを使用
+        )
+        Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+      }
+    }
+  }
+
+  /// Emits the current output-device list, then again whenever CoreAudio's device list changes.
+  public var outputDevicesStream: AsyncStream<[AudioDevice]> {
+    AsyncStream { continuation in
+      class StreamContext: @unchecked Sendable {
+        weak var monitor: AudioDeviceMonitor?
+        let continuation: AsyncStream<[AudioDevice]>.Continuation
+
+        init(
+          monitor: AudioDeviceMonitor,
+          continuation: AsyncStream<[AudioDevice]>.Continuation
+        ) {
+          self.monitor = monitor
+          self.continuation = continuation
+        }
+      }
+
+      let context = StreamContext(monitor: self, continuation: continuation)
+      let bridge = Unmanaged.passRetained(context).toOpaque()
+      nonisolated(unsafe) let safeBridge = bridge
+
+      let listener: AudioObjectPropertyListenerProc = { _, _, _, refcon in
+        guard let refcon else { return noErr }
+        let ctx = Unmanaged<StreamContext>.fromOpaque(refcon).takeUnretainedValue()
+        ctx.continuation.yield(ctx.monitor?.allOutputDevices ?? [])
+        return noErr
+      }
+
+      let address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+
+      var mutableAddress = address
+      AudioObjectAddPropertyListener(
+        AudioObjectID(kAudioObjectSystemObject),
+        &mutableAddress,
+        listener,
+        safeBridge
+      )
+
+      continuation.yield(allOutputDevices)
+
+      continuation.onTermination = { @Sendable _ in
+        var addr = address
+        AudioObjectRemovePropertyListener(
+          AudioObjectID(kAudioObjectSystemObject),
+          &addr,
+          listener,
+          safeBridge
         )
         Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
       }

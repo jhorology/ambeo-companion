@@ -27,6 +27,7 @@ final class AppModel: Sendable {
   private var monitoringFormatTask: Task<Void, Never>?
   private var monitoringSystemEventTask: Task<Void, Never>?
   private var clientTask: Task<Void, Never>?
+  private var clientGeneration = 0
 
   private var isCoreAudioAtmos: Bool = false
   private var isSoundbarAtmos: Bool = false
@@ -130,15 +131,16 @@ final class AppModel: Sendable {
   // MARK: - AmbeoClient (State Manager)
 
   private func reconnectAmbeoClient() {
+    clientGeneration += 1
+    let generation = clientGeneration
+
     clientTask?.cancel()
     atmosDeactivationTask?.cancel()
     atmosDeactivationTask = nil
     atmosTransitionTask?.cancel()
     atmosTransitionTask = nil
-    
-    if let oldClient = ambeoClient {
-      Task { await oldClient.stopObserving() }
-    }
+
+    let previousClient = ambeoClient
     ambeoClient = nil
 
     isAtmosActive = false
@@ -146,14 +148,17 @@ final class AppModel: Sendable {
     isSoundbarAtmos = false
     appliedAtmosBoost = 0
 
-    guard !settings.ambeoUid.isEmpty,
-      let device = networkDevices.first(where: { $0.uuid == settings.ambeoUid })
-    else { return }
-
-    let client = AmbeoClient(host: device.ip)
-    ambeoClient = client
+    let uid = settings.ambeoUid
+    let host = networkDevices.first(where: { $0.uuid == uid })?.ip
 
     clientTask = Task {
+      await previousClient?.stopObserving()
+      guard !Task.isCancelled, generation == self.clientGeneration else { return }
+      guard !uid.isEmpty, let host else { return }
+
+      let client = AmbeoClient(host: host)
+      self.ambeoClient = client
+
       await withTaskGroup(of: Void.self) { group in
         group.addTask { await client.register(AmbeoEndpoint.Player.Volume()) }
         group.addTask { await client.register(AmbeoEndpoint.Player.Mute()) }
@@ -169,10 +174,22 @@ final class AppModel: Sendable {
         group.addTask { await client.register(AmbeoEndpoint.System.Power()) }
         group.addTask { await client.register(AmbeoEndpoint.Audio.DecoderAudioFormat()) }
       }
+
+      guard !Task.isCancelled, generation == self.clientGeneration else {
+        await client.stopObserving()
+        return
+      }
+
       await client.startObserving()
       await client.markInitialSyncCompleted()
 
+      guard !Task.isCancelled, generation == self.clientGeneration else {
+        await client.stopObserving()
+        return
+      }
+
       let initialSoundbarAtmos = await client.state.audioFormat?.isAtmos == true
+      guard generation == self.clientGeneration else { return }
       self.evaluateAtmosState(soundbarAtmos: initialSoundbarAtmos)
     }
   }
@@ -323,27 +340,32 @@ final class AppModel: Sendable {
   /// Synchronizes full soundbar state to OSD overlay and presents it.
   private func syncAndShowOverlay(explicitVolume: Double? = nil, explicitMute: Bool? = nil) async {
     guard let client = ambeoClient else {
-      volumeOverlay.show(volume: explicitVolume, isMuted: explicitMute, isAtmos: isAtmosActive)
+      volumeOverlay.show { state in
+        if let explicitVolume { state.volume = explicitVolume }
+        if let explicitMute { state.isMuted = explicitMute }
+        state.isAtmos = isAtmosActive
+      }
       return
     }
 
     let s = await client.state
+    // AMBEO reports volume as an absolute 0...100 count. The overlay gauge expects 0...1.
     let volPct = explicitVolume ?? (Double(s.volume) / 100.0)
     let muteState = explicitMute ?? s.isMuted
 
-    volumeOverlay.show(
-      volume: volPct,
-      isMuted: muteState,
-      isAmbeoMode: s.isAmbeoMode,
-      ambeoLevel: s.ambeoLevel,
-      isNightMode: s.isNightMode,
-      isVoiceEnhancement: s.isVoiceEnhancement,
-      isEcoMode: s.isEcoMode,
-      maxIdleTime: s.maxIdleTime,
-      powerTarget: s.powerTarget,
-      audioPreset: s.preset,
-      isAtmos: isAtmosActive
-    )
+    volumeOverlay.show { state in
+      state.volume = volPct
+      state.isMuted = muteState
+      state.isAmbeoMode = s.isAmbeoMode
+      state.ambeoLevel = s.ambeoLevel
+      state.isNightMode = s.isNightMode
+      state.isVoiceEnhancement = s.isVoiceEnhancement
+      state.isEcoMode = s.isEcoMode
+      state.maxIdleTime = s.maxIdleTime
+      state.powerTarget = s.powerTarget
+      state.audioPreset = s.preset
+      state.isAtmos = isAtmosActive
+    }
   }
 
   private func handleMediaKey(_ key: SystemEvent.MediaKey) async {
@@ -366,7 +388,8 @@ final class AppModel: Sendable {
       let minVol: Int = entry.edit.flatMap { $0.min } ?? 0
       let maxVol: Int = entry.edit.flatMap { $0.max } ?? 100
       let delta = key == .soundUp ? step : -step
-      let newVol = Swift.max(minVol, Swift.min(maxVol, current + delta))
+      let newVol = max(minVol, min(maxVol, current + delta))
+      // Position within the device min...max range. AMBEO uses 0...100, so this matches the hardware step.
       let pct = maxVol > minVol ? Double(newVol - minVol) / Double(maxVol - minVol) : 0.0
       try? await client.set(
         AmbeoEndpoint.Player.Volume(),
@@ -484,7 +507,7 @@ final class AppModel: Sendable {
         let current = await client.state.volume
         let minVol = entry.edit.flatMap { $0.min } ?? 0
         let maxVol = entry.edit.flatMap { $0.max } ?? 100
-        let newVol = Swift.max(minVol, Swift.min(maxVol, current + boost))
+        let newVol = max(minVol, min(maxVol, current + boost))
         let actualBoost = newVol - current
         appliedAtmosBoost = actualBoost
 
@@ -502,7 +525,7 @@ final class AppModel: Sendable {
         let current = await client.state.volume
         let minVol = entry.edit.flatMap { $0.min } ?? 0
         let maxVol = entry.edit.flatMap { $0.max } ?? 100
-        let newVol = Swift.max(minVol, Swift.min(maxVol, current - appliedAtmosBoost))
+        let newVol = max(minVol, min(maxVol, current - appliedAtmosBoost))
         let revertedBoost = appliedAtmosBoost
         appliedAtmosBoost = 0
 
@@ -528,7 +551,7 @@ final class AppModel: Sendable {
       let current = await client.state.volume
       let minVol = entry.edit.flatMap { $0.min } ?? 0
       let maxVol = entry.edit.flatMap { $0.max } ?? 100
-      let newVol = Swift.max(minVol, Swift.min(maxVol, current + delta))
+      let newVol = max(minVol, min(maxVol, current + delta))
       let actualDelta = newVol - current
       self.appliedAtmosBoost = max(0, self.appliedAtmosBoost + actualDelta)
 

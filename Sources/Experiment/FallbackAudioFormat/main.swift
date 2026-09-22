@@ -1,5 +1,5 @@
 //
-// While playing a Dolny Atmos song on Apple Music, quit with Command + Q
+// While playing a Dolby Atmos song on Apple Music, quit with Command + Q
 // and check that the format returns to 2ch 48Khz 24bit in Audio MIDI Setup.app.
 //
 import AmbeoCore

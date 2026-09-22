@@ -11,9 +11,14 @@ extension Logger {
 
 public enum LogManager {
   private static func logFileURL(_ bundleId: String?) -> URL {
+    if let override = ProcessInfo.processInfo.environment["AMBEO_LOG_FILE"],
+      !override.isEmpty
+    {
+      return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+    }
     #if DEBUG
     // <Project>/Logs/amebeo-companion.log
-    URL(fileURLWithPath: #filePath)  // <project>/Sources/AmbeoCore/Utilities/<this file>
+    return URL(fileURLWithPath: #filePath)  // <project>/Sources/AmbeoCore/Utilities/<this file>
       .deletingLastPathComponent()  // <project>/Sources/AmbeoCore/Utilities
       .deletingLastPathComponent()  // <project>/Sources/AmbeoCore
       .deletingLastPathComponent()  // <project>/Sources

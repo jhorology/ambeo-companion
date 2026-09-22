@@ -4,6 +4,7 @@ import SwiftUI
 // MARK: - Observable state shared with the SwiftUI view
 
 @Observable
+@MainActor
 final class VolumeOverlayState {
   var volume: Double = 0
   var isMuted: Bool = false
@@ -26,31 +27,10 @@ final class VolumeOverlayManager {
   let state = VolumeOverlayState()
   private var dismissTask: Task<Void, Never>?
 
-  /// Show the overlay with updated status information.
-  func show(
-    volume: Double? = nil,
-    isMuted: Bool? = nil,
-    isAmbeoMode: Bool? = nil,
-    ambeoLevel: String? = nil,
-    isNightMode: Bool? = nil,
-    isVoiceEnhancement: Bool? = nil,
-    isEcoMode: Bool? = nil,
-    maxIdleTime: Int? = nil,
-    powerTarget: String? = nil,
-    audioPreset: String? = nil,
-    isAtmos: Bool? = nil
-  ) {
-    if let v = volume { state.volume = v }
-    if let m = isMuted { state.isMuted = m }
-    if let a = isAmbeoMode { state.isAmbeoMode = a }
-    if let al = ambeoLevel { state.ambeoLevel = al }
-    if let nm = isNightMode { state.isNightMode = nm }
-    if let ve = isVoiceEnhancement { state.isVoiceEnhancement = ve }
-    if let eco = isEcoMode { state.isEcoMode = eco }
-    if let mit = maxIdleTime { state.maxIdleTime = mit }
-    if let pt = powerTarget { state.powerTarget = pt }
-    if let ap = audioPreset { state.audioPreset = ap }
-    if let at = isAtmos { state.isAtmos = at }
+  /// Applies `update` to the current overlay state, then presents it.
+  /// Fields the closure does not touch keep their previous values.
+  func show(_ update: (VolumeOverlayState) -> Void = { _ in }) {
+    update(state)
 
     if panel == nil { createPanel() }
     guard let panel else { return }

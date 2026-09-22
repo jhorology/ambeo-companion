@@ -115,25 +115,44 @@ public struct SimpleFileLogHandler: LogHandler {
     return symbol
   }
 
-  private static let fileLock = NSLock()
+  private final class OpenLogFiles: @unchecked Sendable {
+    static let shared = OpenLogFiles()
+    let lock = NSLock()
+    var handles: [String: FileHandle] = [:]
+  }
 
   private func writeWithRotation(_ line: String) {
-    Self.fileLock.lock()
-    defer { Self.fileLock.unlock() }
+    let store = OpenLogFiles.shared
+    store.lock.lock()
+    defer { store.lock.unlock() }
 
     guard let data = line.data(using: .utf8) else { return }
     let fm = FileManager.default
-    if let fileHandle = try? FileHandle(forWritingTo: logFileURL) {
-      fileHandle.seekToEndOfFile()
-      fileHandle.write(data)
-      fileHandle.closeFile()
-      if let attr = try? fm.attributesOfItem(atPath: logFileURL.path),
-        (attr[.size] as? UInt64 ?? 0) > config.maxFileSize
-      {
-        rotateFiles(fm: fm)
-      }
+    let key = logFileURL.path
+
+    let fileHandle: FileHandle
+    if let existing = store.handles[key] {
+      fileHandle = existing
     } else {
-      try? data.write(to: logFileURL)
+      if !fm.fileExists(atPath: key) {
+        fm.createFile(atPath: key, contents: nil)
+      }
+      guard let opened = try? FileHandle(forWritingTo: logFileURL) else {
+        try? data.write(to: logFileURL)
+        return
+      }
+      _ = opened.seekToEndOfFile()
+      store.handles[key] = opened
+      fileHandle = opened
+    }
+
+    fileHandle.write(data)
+    let size = fileHandle.seekToEndOfFile()
+    if size > config.maxFileSize {
+      // Close before rename. An open descriptor keeps writing to the old inode after the file moves.
+      fileHandle.closeFile()
+      store.handles[key] = nil
+      rotateFiles(fm: fm)
     }
   }
 
