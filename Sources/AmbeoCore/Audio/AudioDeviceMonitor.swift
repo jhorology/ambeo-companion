@@ -76,11 +76,15 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
 }
 
 private enum EncodedAudioFormatID {
-  // Apple / CoreAudio 内部識別子 (実機で取得されるビットストリーム識別子)
-  static let dolbyMATInternal = fourCC("mtct")          // 1_836_344_180 (Dolby MAT)
-  static let dolbyMATPlusInternal = fourCC("mtc+")      // 1_836_344_107 (Dolby MAT + Atmos)
-  static let dolbyDigitalPlusInternal = fourCC("cd+3")    // 1_667_509_043 (Dolby Digital Plus)
-  static let enhancedAC3Internal = fourCC("cec3")       // 1_667_588_915 (Enhanced AC-3)
+  // Apple / CoreAudio 内部ビットストリーム識別子 (HDMI / eARC で実測・ネゴシエーションされる識別子)
+  static let dolbyEAC3CCPlus3 = fourCC("cc+3")          // 1_667_443_507 (実機ログで実測: 2ch 16-bit 192kHz ['cc+3'])
+  static let dolbyEAC3CDPlus3 = fourCC("cd+3")          // 1_667_509_043
+  static let enhancedAC3Internal = fourCC("cec3")       // 1_667_588_915
+  static let dolbyMATInternalA = fourCC("mtat")
+  static let dolbyMATInternalB = fourCC("mtbt")
+  static let dolbyMATInternalC = fourCC("mtct")         // 1_836_344_180 (Dolby MAT)
+  static let dolbyMATPlusInternalB = fourCC("mtb+")
+  static let dolbyMATPlusInternalC = fourCC("mtc+")     // 1_836_344_107 (Dolby MAT + Atmos)
 
   // Apple 公式オーディオトラック / CoreAudio 標準定義
   static let enhancedAC3 = fourCC("ec-3")               // kAudioFormatEnhancedAC3
@@ -96,10 +100,14 @@ private enum EncodedAudioFormatID {
 
   static func isEncodedSurround(formatID: UInt32) -> Bool {
     switch formatID {
-    case dolbyMATInternal,
-      dolbyMATPlusInternal,
-      dolbyDigitalPlusInternal,
+    case dolbyEAC3CCPlus3,
+      dolbyEAC3CDPlus3,
       enhancedAC3Internal,
+      dolbyMATInternalA,
+      dolbyMATInternalB,
+      dolbyMATInternalC,
+      dolbyMATPlusInternalB,
+      dolbyMATPlusInternalC,
       enhancedAC3,
       enhancedAC3JOC,
       dolbyDigital,
