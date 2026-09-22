@@ -32,6 +32,7 @@ final class AppModel: Sendable {
   private var isSoundbarAtmos: Bool = false
   private(set) var isAtmosActive: Bool = false
   private var appliedAtmosBoost: Int = 0
+  private var atmosDeactivationTask: Task<Void, Never>?
 
   var settings: AppSettings {
     didSet {
@@ -128,6 +129,8 @@ final class AppModel: Sendable {
 
   private func reconnectAmbeoClient() {
     clientTask?.cancel()
+    atmosDeactivationTask?.cancel()
+    atmosDeactivationTask = nil
     ambeoClient = nil
     lastAudioPreset = nil
 
@@ -370,7 +373,11 @@ final class AppModel: Sendable {
 
       // Decoder audio format change: detect Dolby Atmos from soundbar DSP
       if path == AmbeoEndpoint.Audio.DecoderAudioFormat().path {
-        let soundbarAtmos = await client.state.audioFormat?.isAtmos == true
+        let fmt = await client.state.audioFormat
+        let soundbarAtmos = fmt?.isAtmos == true
+        Logger.audio.debug(
+          "Soundbar audio format: codec=\(fmt?.codec ?? "none"), channels=\(fmt?.channels ?? 0), isAtmos=\(soundbarAtmos)"
+        )
         await self.evaluateAtmosState(soundbarAtmos: soundbarAtmos)
       }
 
@@ -405,11 +412,41 @@ final class AppModel: Sendable {
     if let ca = coreAudioAtmos { isCoreAudioAtmos = ca }
     if let sa = soundbarAtmos { isSoundbarAtmos = sa }
 
-    let newIsAtmos = isCoreAudioAtmos || isSoundbarAtmos
-    guard newIsAtmos != isAtmosActive else { return }
-    isAtmosActive = newIsAtmos
+    let rawIsAtmos = isCoreAudioAtmos || isSoundbarAtmos
 
-    await handleAtmosTransition(isAtmos: newIsAtmos)
+    if rawIsAtmos {
+      // Atmos detected by CoreAudio or Soundbar DSP
+      if let task = atmosDeactivationTask {
+        Logger.audio.debug(
+          "Dolby Atmos detected while deactivation grace period was pending. Cancelling deactivation."
+        )
+        task.cancel()
+        atmosDeactivationTask = nil
+      }
+
+      guard !isAtmosActive else { return }
+      isAtmosActive = true
+      await handleAtmosTransition(isAtmos: true)
+    } else {
+      // Atmos is not currently detected
+      guard isAtmosActive else {
+        atmosDeactivationTask?.cancel()
+        atmosDeactivationTask = nil
+        return
+      }
+
+      // If already waiting during grace period (e.g. track transition or transient handshake), keep waiting
+      guard atmosDeactivationTask == nil else { return }
+
+      Logger.audio.debug("Dolby Atmos dropped. Starting deactivation grace period (500ms)...")
+      atmosDeactivationTask = Task { @MainActor [weak self] in
+        try? await Task.sleep(for: .milliseconds(500))
+        guard !Task.isCancelled, let self else { return }
+        self.atmosDeactivationTask = nil
+        self.isAtmosActive = false
+        await self.handleAtmosTransition(isAtmos: false)
+      }
+    }
   }
 
   private func handleAtmosTransition(isAtmos: Bool) async {
@@ -426,13 +463,14 @@ final class AppModel: Sendable {
         let minVol = entry.edit.flatMap { $0.min } ?? 0
         let maxVol = entry.edit.flatMap { $0.max } ?? 100
         let newVol = Swift.max(minVol, Swift.min(maxVol, current + boost))
-        appliedAtmosBoost = boost
+        let actualBoost = newVol - current
+        appliedAtmosBoost = actualBoost
 
         try? await client.set(
           AmbeoEndpoint.Player.Volume(),
           valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
         )
-        Logger.audio.info("Atmos Boost applied: \(current) → \(newVol) (+\(boost)%)")
+        Logger.audio.info("Atmos Boost applied: \(current) → \(newVol) (+\(actualBoost)%)")
         await syncAndShowOverlay()
       }
     } else {
@@ -457,7 +495,7 @@ final class AppModel: Sendable {
   }
 
   private func handleAtmosBoostAmountChanged(from oldAmount: Double, to newAmount: Double) {
-    guard isAtmosActive, appliedAtmosBoost > 0 else { return }
+    guard isAtmosActive else { return }
     let newBoost = Int(newAmount)
     let delta = newBoost - appliedAtmosBoost
     guard delta != 0 else { return }
@@ -469,14 +507,15 @@ final class AppModel: Sendable {
       let minVol = entry.edit.flatMap { $0.min } ?? 0
       let maxVol = entry.edit.flatMap { $0.max } ?? 100
       let newVol = Swift.max(minVol, Swift.min(maxVol, current + delta))
-      self.appliedAtmosBoost = newBoost
+      let actualDelta = newVol - current
+      self.appliedAtmosBoost = max(0, self.appliedAtmosBoost + actualDelta)
 
       try? await client.set(
         AmbeoEndpoint.Player.Volume(),
         valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
       )
       Logger.audio.info(
-        "Atmos Boost adjusted: \(current) → \(newVol) (\(delta >= 0 ? "+" : "")\(delta)%)"
+        "Atmos Boost adjusted: \(current) → \(newVol) (\(actualDelta >= 0 ? "+" : "")\(actualDelta)%)"
       )
       await self.syncAndShowOverlay()
     }
@@ -504,6 +543,8 @@ final class AppModel: Sendable {
         guard let self else { return }
         self.monitoringAudioDeviceTask?.cancel()
         self.monitoringFormatTask?.cancel()
+        self.atmosDeactivationTask?.cancel()
+        self.atmosDeactivationTask = nil
         self.discoveringAmbeoTask?.cancel()
         self.monitoringSystemEventTask?.cancel()
         self.clientTask?.cancel()

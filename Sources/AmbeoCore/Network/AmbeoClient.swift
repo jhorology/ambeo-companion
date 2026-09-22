@@ -17,6 +17,8 @@ public actor AmbeoClient {
   /// Tracks the most-recently-observed value for each registered path.
   private var latestValues: [String: Any] = [:]
   private var registeredPaths: Set<String> = []
+  /// Tracks values set locally by this client to suppress echo notifications from the pollQueue.
+  private var expectedEchoValues: [String: Set<String>] = [:]
 
   private var updateHandlers: [String: (Data?) async throws -> Void] = [:]
 
@@ -173,7 +175,15 @@ public actor AmbeoClient {
     updateState(path: path, newValue: newValue)
 
     let notifPath = path
-    let isExternal = isInitialSyncCompleted
+    let valStr = "\(newValue)"
+    let isEcho = expectedEchoValues[path]?.contains(valStr) == true
+    if isEcho {
+      expectedEchoValues[path]?.remove(valStr)
+      if expectedEchoValues[path]?.isEmpty == true {
+        expectedEchoValues.removeValue(forKey: path)
+      }
+    }
+    let isExternal = isInitialSyncCompleted && !isEcho
     DispatchQueue.main.async {
       NotificationCenter.default.post(
         name: .ambeoStatusDidChange,
@@ -353,8 +363,19 @@ public actor AmbeoClient {
       let body = String(data: data, encoding: .utf8) ?? ""
       Logger.network.error("setData error: HTTP \(http.statusCode): \(body)")
     } else {
+      var updatedValue: E.Payload? = nil
       if let single = try? decoder.decode(AmbeoEntry<E>.self, from: data), let v = single.value {
+        updatedValue = v
+      } else if let container = try? decoder.decode(
+        AmbeoValueContainer<E.Payload>.self,
+        from: Data(valueJSON.utf8)
+      ) {
+        updatedValue = container.decodedValue
+      }
+
+      if let v = updatedValue {
         updateState(path: endpoint.path, newValue: v)
+        expectedEchoValues[endpoint.path, default: []].insert("\(v)")
       }
     }
   }
