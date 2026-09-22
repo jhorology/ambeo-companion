@@ -33,6 +33,11 @@ struct AmbeoCompanionApp: App {
             || !appModel.networkDevices.contains(where: { $0.uuid == appModel.settings.ambeoUid })
         )
 
+        Button("Wake Up Soundbar", systemImage: "bolt.fill") {
+          Task { await appModel.wakeUpSoundbar() }
+        }
+        .disabled(appModel.ambeoClient == nil)
+
         Button("Settings...", systemImage: "gearshape") {
           openSettingsWindow()
         }

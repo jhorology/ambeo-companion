@@ -2,7 +2,7 @@
 
 Sennheiser AMBEO Soundbar (Mini / Plus / Max) を macOS 上から快適に操作・連携するためのコンパニオンメニューバーアプリケーションです。
 
-macOS の eARC / HDMI パススルー環境における音量調整の制約を解消し、キーボードのメディアキー連携、Dolby Atmos 音量自動補正、macOS ネイティブ風の OSD 表示、グローバルショートカット機能などを提供します。
+macOS の eARC / HDMI パススルー環境における音量調整の制約を解消し、キーボードのメディアキー連携、Dolby Atmos 音量自動補正、無音放置時の自動スリープ（Eco Standby）制御・強制覚醒、macOS ネイティブ風の OSD 表示、グローバルショートカット機能などを提供します。
 
 ---
 
@@ -19,13 +19,23 @@ macOS の eARC / HDMI パススルー環境における音量調整の制約を�
   - Dolby Atmos（空間オーディオ）とステレオ PCM 音源が混在するプレイリスト再生時、音源切り替えに伴う音量差を自動で解消するため、Atmos 再生時に指定した音量（0〜40%）を自動でブーストします。
 - **Fallback Audio Format 制御**:
   - Dolby Atmos 非再生時に macOS が 192 kHz にデフォルト化して不要な処理負荷や遅延が生じるのを防ぎ、指定したフォーマット（48 kHz 2ch など）へ自動フォールバックします。
+- **Auto Standby 制御 & 自動同期（無音スリープ問題の根本解消）**:
+  - 公式 Smart Control アプリや Web UI では規制（EU ErP指令等）により隠されている「オートスタンバイ待機時間（Off / 5分 / 10分 / 15分 / 30分）」を設定画面から直接変更可能です。
+  - PC 環境で「音声をしばらく再生しないとサウンドバーが勝手にエコモードに入り、HDMI/eARC 経由で音が出なくなる」問題を「Off (Never)」設定により根本解決します。
+  - アプリ側の設定として永続化されるため、サウンドバー本体の電源オフやファームウェア更新等で実機側の待機時間がリセットされた場合でも、アプリ起動時・再接続時に希望の設定値へ自動で強制同期（上書き適用）します。
+- **Wake Up Soundbar（ワンクリック & ワンキー強制覚醒）**:
+  - サウンドバーがスリープ（Eco Standby）に入って HDMI/eARC オーディオリンクが切断された場合でも、メニューバーの「Wake Up Soundbar」メニュー、または割り当てたグローバルショートカットからワンアクションでサウンドバーを即座に強制覚醒させ、HDMI TV 音声を即復帰させます。
+  - AirPlay への切り替えと HDMI への戻しといった手動のワークアラウンドが不要になります。
 - **グローバルショートカット**:
   - 自由なキーバインドを登録し、いつでも以下の機能をワンキーで操作可能です：
+    - Wake Up Soundbar (スタンバイからの即時強制覚醒・HDMI復帰)
     - AMBEO 3D Mode 切替 (On / Off)
     - AMBEO 3D Level 切替 (Light / Standard / Boost)
     - 音声プリセット切替 (Adaptive, Music, Movie, News, Neutral, Sports)
     - Night Mode 切替 (On / Off)
     - Voice Enhancement 切替 (On / Off)
+
+
 - **ログイン時自動起動 (Launch at Login)**:
   - macOS 13+ の `ServiceManagement` (`SMAppService.mainApp`) に完全準拠し、設定画面からワンクリックで Mac 起動時のバックグラウンド常駐を有効化できます。
 - **mDNS デバイス自動検出**:

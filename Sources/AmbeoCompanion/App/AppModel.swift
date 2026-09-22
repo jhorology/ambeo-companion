@@ -13,7 +13,25 @@ struct AppSettings: Codable {
   var fallbackAudioFormatID: String = ""
   var mediaKeyEnabled: Bool = true
   var atmosBoostAmount: Double = 0
+  var autoStandbySeconds: Int = 0
+
+  enum CodingKeys: String, CodingKey {
+    case ambeoUid, audioDeviceUid, fallbackAudioFormatID, mediaKeyEnabled, atmosBoostAmount, autoStandbySeconds
+  }
+
+  init() {}
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    ambeoUid = try container.decodeIfPresent(String.self, forKey: .ambeoUid) ?? ""
+    audioDeviceUid = try container.decodeIfPresent(String.self, forKey: .audioDeviceUid) ?? ""
+    fallbackAudioFormatID = try container.decodeIfPresent(String.self, forKey: .fallbackAudioFormatID) ?? ""
+    mediaKeyEnabled = try container.decodeIfPresent(Bool.self, forKey: .mediaKeyEnabled) ?? true
+    atmosBoostAmount = try container.decodeIfPresent(Double.self, forKey: .atmosBoostAmount) ?? 0
+    autoStandbySeconds = try container.decodeIfPresent(Int.self, forKey: .autoStandbySeconds) ?? 0
+  }
 }
+
 
 @Observable
 @MainActor
@@ -56,12 +74,19 @@ final class AppModel: Sendable {
           to: settings.atmosBoostAmount
         )
       }
+      if settings.autoStandbySeconds != oldValue.autoStandbySeconds {
+        Task { [weak self] in
+          await self?.syncAutoStandbyToSoundbar()
+        }
+      }
     }
   }
+
 
   private(set) var networkDevices: [SennheiserNetworkDevice] = []
   private(set) var currentAudioDevice: AudioDevice? = nil
   private(set) var ambeoClient: AmbeoClient? = nil
+  private(set) var maxIdleTime: Int = 0
 
   private var lastAudioPreset: String? = nil
 
@@ -191,10 +216,20 @@ final class AppModel: Sendable {
       }
 
       let initialSoundbarAtmos = await client.state.audioFormat?.isAtmos == true
+      let initialMaxIdleTime = await client.state.maxIdleTime
       guard generation == self.clientGeneration else { return }
+      if initialMaxIdleTime != self.settings.autoStandbySeconds {
+        Logger.lifecycle.info(
+          "Auto Standby mismatch detected (soundbar: \(initialMaxIdleTime)s, app setting: \(self.settings.autoStandbySeconds)s). Enforcing app setting."
+        )
+        await self.syncAutoStandbyToSoundbar()
+      } else {
+        self.maxIdleTime = initialMaxIdleTime
+      }
       self.evaluateAtmosState(soundbarAtmos: initialSoundbarAtmos)
     }
   }
+
 
   // MARK: - Discovery
 
@@ -423,6 +458,19 @@ final class AppModel: Sendable {
         )
         self.evaluateAtmosState(soundbarAtmos: soundbarAtmos)
       }
+
+      // Auto Standby idle time change
+      if path == AmbeoEndpoint.System.MaxIdleTime().path {
+        let externalTime = await client.state.maxIdleTime
+        self.maxIdleTime = externalTime
+        if isExternal, self.settings.autoStandbySeconds != externalTime {
+          Logger.lifecycle.info(
+            "External Auto Standby change detected: syncing app setting to \(externalTime)s"
+          )
+          self.settings.autoStandbySeconds = externalTime
+        }
+      }
+
 
       // If change was triggered externally (remote control, hardware buttons, app),
       // update state and display the OSD on screen for user-facing audio controls!
@@ -707,6 +755,12 @@ final class AppModel: Sendable {
         await self?.toggleVoiceEnhancement()
       }
     }
+
+    KeyboardShortcuts.onKeyDown(for: .wakeUpSoundbar) { [weak self] in
+      Task { @MainActor in
+        await self?.wakeUpSoundbar()
+      }
+    }
   }
 
   func toggleAmbeoMode() async {
@@ -782,4 +836,41 @@ final class AppModel: Sendable {
     Logger.audio.info("Shortcut: Voice Enhancement -> \(newVoice)")
     await syncAndShowOverlay()
   }
+
+  func syncAutoStandbyToSoundbar() async {
+    guard let client = ambeoClient else { return }
+    let target = settings.autoStandbySeconds
+    do {
+      try await client.set(
+        AmbeoEndpoint.System.MaxIdleTime(),
+        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(target)}"
+      )
+      self.maxIdleTime = target
+      Logger.lifecycle.info("Synced Auto Standby to soundbar: \(target) seconds")
+      await syncAndShowOverlay()
+    } catch {
+      Logger.lifecycle.error("Failed to sync Auto Standby to soundbar: \(error.localizedDescription)")
+    }
+  }
+
+  func setMaxIdleTime(_ seconds: Int) async {
+    settings.autoStandbySeconds = seconds
+    await syncAutoStandbyToSoundbar()
+  }
+
+
+  func wakeUpSoundbar() async {
+    guard let client = ambeoClient else { return }
+    do {
+      try await client.activate(path: "ui:/inputs/hdmiTv")
+      Logger.lifecycle.info("Shortcut: Soundbar awake requested (HDMI TV activated)")
+      if let curDev = currentAudioDevice, curDev.uid == settings.audioDeviceUid {
+        applyFallbackFormatIfNeeded(for: curDev)
+      }
+      await syncAndShowOverlay()
+    } catch {
+      Logger.lifecycle.error("Failed to awake soundbar: \(error.localizedDescription)")
+    }
+  }
 }
+

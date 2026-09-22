@@ -120,6 +120,23 @@ struct SettingsView: View {
               .frame(width: 45, alignment: .trailing)
           }
         }
+
+        LabeledDescription(
+          title: "Auto Standby",
+          subtitle:
+            "Time with no audio playback before the soundbar enters eco standby mode."
+        ) {
+          Picker("", selection: $model.settings.autoStandbySeconds) {
+            Text("Off (Never)").tag(0)
+            Text("5 minutes").tag(300)
+            Text("10 minutes").tag(600)
+            Text("15 minutes").tag(900)
+            Text("30 minutes").tag(1800)
+          }
+          .labelsHidden()
+          .disabled(appModel.ambeoClient == nil)
+        }
+
       } header: {
         Text("Preferences")
       }
@@ -127,11 +144,19 @@ struct SettingsView: View {
       // --- Section 4: Shortcuts ---
       Section {
         LabeledDescription(
+          title: "Wake Up Soundbar",
+          subtitle: "Wake up the soundbar and reconnect HDMI TV audio when in standby."
+        ) {
+          KeyboardShortcuts.Recorder(for: .wakeUpSoundbar)
+        }
+
+        LabeledDescription(
           title: "AMBEO 3D Mode",
           subtitle: "Toggle AMBEO 3D sound processing On or Off."
         ) {
           KeyboardShortcuts.Recorder(for: .toggleAmbeoMode)
         }
+
 
         LabeledDescription(
           title: "AMBEO 3D Level",
@@ -169,7 +194,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.6"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.7"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)

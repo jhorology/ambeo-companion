@@ -416,4 +416,31 @@ public actor AmbeoClient {
       }
     }
   }
+
+  /// Triggers an action on an AMBEO endpoint using `role=activate`.
+  public func activate(path: String = "ui:/inputs/hdmiTv") async throws {
+    var components = URLComponents()
+    components.scheme = "http"
+    components.host = host
+    components.path = "/api/setData"
+    components.queryItems = [
+      URLQueryItem(name: "path", value: path),
+      URLQueryItem(name: "role", value: "activate"),
+      URLQueryItem(name: "value", value: "{}"),
+      URLQueryItem(name: "_nocache", value: String(Int64(Date().timeIntervalSince1970 * 1000))),
+    ]
+
+    guard let url = components.url else { return }
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+
+    let (data, response) = try await session.data(for: request)
+    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+      let body = String(data: data, encoding: .utf8) ?? ""
+      Logger.network.error("activate error on [\(path)]: HTTP \(http.statusCode): \(body)")
+      throw URLError(.badServerResponse)
+    }
+    Logger.network.info("Activated endpoint [\(path)] successfully.")
+  }
 }
+
