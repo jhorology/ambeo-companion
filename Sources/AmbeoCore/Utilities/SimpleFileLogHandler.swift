@@ -51,15 +51,13 @@ public struct SimpleFileLogHandler: LogHandler {
     )
   }
 
-  public func log(
-    level: Logger.Level,
-    message: Logger.Message,
-    metadata: Logger.Metadata?,
-    source: String,
-    file: String,
-    function: String,
-    line: UInt
-  ) {
+  public func log(event: Logging.LogEvent) {
+    let level = event.level
+    let message = event.message
+    let metadata = event.metadata
+    let file = event.file
+    let function = event.function
+    let line = event.line
     let timestamp = formatDate(Date())
     let category = label.components(separatedBy: ".").last ?? label
     let fileName = (file as NSString).lastPathComponent
@@ -117,7 +115,12 @@ public struct SimpleFileLogHandler: LogHandler {
     return symbol
   }
 
+  private static let fileLock = NSLock()
+
   private func writeWithRotation(_ line: String) {
+    Self.fileLock.lock()
+    defer { Self.fileLock.unlock() }
+
     guard let data = line.data(using: .utf8) else { return }
     let fm = FileManager.default
     if let fileHandle = try? FileHandle(forWritingTo: logFileURL) {
@@ -145,9 +148,16 @@ public struct SimpleFileLogHandler: LogHandler {
   }
 
   private func formatDate(_ date: Date) -> String {
-    let f = DateFormatter()
-    f.dateFormat = "HH:mm:ss.SSS"
-    return f.string(from: date)
+    let threadDictionary = Thread.current.threadDictionary
+    let formatter: DateFormatter
+    if let cached = threadDictionary["SimpleFileLogHandler.DateFormatter"] as? DateFormatter {
+      formatter = cached
+    } else {
+      formatter = DateFormatter()
+      formatter.dateFormat = "HH:mm:ss.SSS"
+      threadDictionary["SimpleFileLogHandler.DateFormatter"] = formatter
+    }
+    return formatter.string(from: date)
   }
 
   private func getEmoji(_ level: Logger.Level) -> String {

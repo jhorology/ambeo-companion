@@ -17,12 +17,20 @@ public actor AmbeoClient {
   /// Tracks the most-recently-observed value for each registered path.
   private var latestValues: [String: Any] = [:]
   private var registeredPaths: Set<String> = []
+  private var stateUpdaters: [String: @Sendable (Any, inout AmbeoState) -> Void] = [:]
   /// Tracks values set locally by this client to suppress echo notifications from the pollQueue.
   private var expectedEchoValues: [String: Set<String>] = [:]
 
   private var updateHandlers: [String: (Data?) async throws -> Void] = [:]
 
   private var isObserving = false
+  private var pollTask: Task<Void, Never>?
+
+  public func stopObserving() {
+    isObserving = false
+    pollTask?.cancel()
+    pollTask = nil
+  }
 
   public init(host: String) {
     self.host = host
@@ -41,6 +49,11 @@ public actor AmbeoClient {
   public func register<E: AmbeoEndpointProtocol>(_ endpoint: E) async {
     guard !registeredPaths.contains(endpoint.path) else { return }
     registeredPaths.insert(endpoint.path)
+    stateUpdaters[endpoint.path] = { value, state in
+      if let v = value as? E.Payload {
+        endpoint.apply(v, to: &state)
+      }
+    }
 
     do {
       var components = URLComponents()
@@ -127,47 +140,8 @@ public actor AmbeoClient {
 
   private func updateState<V>(path: String, newValue: V) {
     latestValues[path] = newValue
-
-    if path == "player:volume", let v = newValue as? Int {
-      state.volume = v
-    } else if path == "settings:/mediaPlayer/mute", let m = newValue as? Bool {
-      state.isMuted = m
-    } else if path == "settings:/popcorn/audio/audioPresets/audioPreset",
-      let p = newValue as? String
-    {
-      state.preset = p
-      if let level = state.ambeoLevels[p.lowercased()] {
-        state.ambeoLevel = level
-      }
-    } else if path == "settings:/popcorn/audio/ambeoModeStatus", let m = newValue as? Bool {
-      state.isAmbeoMode = m
-    } else if path.hasPrefix("settings:/popcorn/audio/audioPresets/ambeoModeLevel_"),
-      let l = newValue as? String
-    {
-      let presetName = path.replacingOccurrences(
-        of: "settings:/popcorn/audio/audioPresets/ambeoModeLevel_",
-        with: ""
-      ).lowercased()
-      state.ambeoLevels[presetName] = l
-      if state.preset.lowercased() == presetName {
-        state.ambeoLevel = l
-      }
-    } else if path == "settings:/popcorn/audio/nightModeStatus", let n = newValue as? Bool {
-      state.isNightMode = n
-    } else if path == "settings:/popcorn/audio/voiceEnhancement", let ve = newValue as? Bool {
-      state.isVoiceEnhancement = ve
-    } else if path == "uipopcorn:ecoModeState", let eco = newValue as? Bool {
-      state.isEcoMode = eco
-    } else if path == "settings:/system/maxIdleTime", let idle = newValue as? Int {
-      state.maxIdleTime = idle
-    } else if path == "imx8af:decoderAudioFormat", let af = newValue as? AmbeoAudioFormat {
-      state.audioFormat = af
-    } else if path == "powermanager:target" {
-      if let pt = newValue as? AmbeoPowerTarget {
-        state.powerTarget = pt.target
-      } else if let s = newValue as? String {
-        state.powerTarget = s
-      }
+    if let updater = stateUpdaters[path] {
+      updater(newValue, &state)
     }
   }
 
@@ -202,7 +176,8 @@ public actor AmbeoClient {
     guard !isObserving, !registeredPaths.isEmpty else { return }
     isObserving = true
 
-    Task {
+    pollTask?.cancel()
+    pollTask = Task {
       Logger.network.info(
         "AMBEO event observation loop started for \(self.registeredPaths.count) paths."
       )
@@ -284,7 +259,7 @@ public actor AmbeoClient {
       let pathsToSubscribe = Array(registeredPaths)
       let subscribeArray = pathsToSubscribe.map { ["path": $0, "type": "itemWithValue"] }
       let subscribeData = try JSONSerialization.data(withJSONObject: subscribeArray)
-      let subscribeString = String(data: subscribeData, encoding: .utf8)!
+      let subscribeString = String(data: subscribeData, encoding: .utf8) ?? ""
 
       var regComponents = URLComponents()
       regComponents.scheme = "http"
@@ -362,6 +337,7 @@ public actor AmbeoClient {
     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
       let body = String(data: data, encoding: .utf8) ?? ""
       Logger.network.error("setData error: HTTP \(http.statusCode): \(body)")
+      throw URLError(.badServerResponse)
     } else {
       var updatedValue: E.Payload? = nil
       if let single = try? decoder.decode(AmbeoEntry<E>.self, from: data), let v = single.value {

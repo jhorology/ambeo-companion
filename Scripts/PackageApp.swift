@@ -32,26 +32,44 @@ if buildStatus != 0 {
   exit(buildStatus)
 }
 
+func safeCopy(from: String, to: String) {
+  do {
+    try fm.copyItem(atPath: from, toPath: to)
+  } catch {
+    print("❌ Failed to copy \(from) to \(to): \(error)")
+    exit(1)
+  }
+}
+
+func safeCreateDir(at: String) {
+  do {
+    try fm.createDirectory(atPath: at, withIntermediateDirectories: true)
+  } catch {
+    print("❌ Failed to create directory \(at): \(error)")
+    exit(1)
+  }
+}
+
 print("📦 [2/4] Creating Bundle Structure...")
 let execPath = "\(appBundle)/Contents/MacOS"
 let resPath = "\(appBundle)/Contents/Resources"
 
 // clean appBundle & create folders
 try? fm.removeItem(atPath: appBundle)
-try! fm.createDirectory(atPath: execPath, withIntermediateDirectories: true)
-try! fm.createDirectory(atPath: resPath, withIntermediateDirectories: true)
+safeCreateDir(at: execPath)
+safeCreateDir(at: resPath)
 
 print("📂 [3/4] Copying Files...")
 // executable file
-try! fm.copyItem(atPath: "\(buildDir)/\(appName)", toPath: "\(execPath)/\(appName)")
+safeCopy(from: "\(buildDir)/\(appName)", to: "\(execPath)/\(appName)")
 // Info.plist
-try! fm.copyItem(atPath: infoPlistSrc, toPath: "\(appBundle)/Contents/Info.plist")
+safeCopy(from: infoPlistSrc, to: "\(appBundle)/Contents/Info.plist")
 // Resources (AppIcon.icns, etc.)
 if let items = try? fm.contentsOfDirectory(atPath: srcResources) {
   for item in items {
     let dest = "\(resPath)/\(item)"
     try? fm.removeItem(atPath: dest)
-    try! fm.copyItem(atPath: "\(srcResources)/\(item)", toPath: dest)
+    safeCopy(from: "\(srcResources)/\(item)", to: dest)
     print("  Copied resource: \(item)")
   }
 }
@@ -60,13 +78,20 @@ if let buildItems = try? fm.contentsOfDirectory(atPath: buildDir) {
   for item in buildItems where item.hasSuffix(".bundle") {
     let dest = "\(resPath)/\(item)"
     try? fm.removeItem(atPath: dest)
-    try! fm.copyItem(atPath: "\(buildDir)/\(item)", toPath: dest)
+    safeCopy(from: "\(buildDir)/\(item)", to: dest)
     print("  Copied package bundle: \(item)")
   }
 }
 
 print("✍️  [4/4] Signing App...")
-shell("codesign", "--deep", "--force", "--options", "runtime", "--sign", "-", appBundle)
+// Sign inner bundles first
+if let resItems = try? fm.contentsOfDirectory(atPath: resPath) {
+  for item in resItems where item.hasSuffix(".bundle") {
+    shell("codesign", "--force", "--options", "runtime", "--sign", "-", "\(resPath)/\(item)")
+  }
+}
+// Sign the main app bundle
+shell("codesign", "--force", "--options", "runtime", "--sign", "-", appBundle)
 
 print("\n✅ Successfully created \(appBundle)!")
 print("👉 Run with: open \(appBundle)")

@@ -33,6 +33,8 @@ final class AppModel: Sendable {
   private(set) var isAtmosActive: Bool = false
   private var appliedAtmosBoost: Int = 0
   private var atmosDeactivationTask: Task<Void, Never>?
+  private var atmosTransitionTask: Task<Void, Never>?
+  private var lastOSDTask: Task<Void, Never>?
 
   var settings: AppSettings {
     didSet {
@@ -131,8 +133,18 @@ final class AppModel: Sendable {
     clientTask?.cancel()
     atmosDeactivationTask?.cancel()
     atmosDeactivationTask = nil
+    atmosTransitionTask?.cancel()
+    atmosTransitionTask = nil
+    
+    if let oldClient = ambeoClient {
+      Task { await oldClient.stopObserving() }
+    }
     ambeoClient = nil
-    lastAudioPreset = nil
+
+    isAtmosActive = false
+    isCoreAudioAtmos = false
+    isSoundbarAtmos = false
+    appliedAtmosBoost = 0
 
     guard !settings.ambeoUid.isEmpty,
       let device = networkDevices.first(where: { $0.uuid == settings.ambeoUid })
@@ -142,24 +154,26 @@ final class AppModel: Sendable {
     ambeoClient = client
 
     clientTask = Task {
-      await client.register(AmbeoEndpoint.Player.Volume())
-      await client.register(AmbeoEndpoint.Player.Mute())
-      await client.register(AmbeoEndpoint.Audio.Preset())
-      await client.register(AmbeoEndpoint.Audio.AmbeoMode())
-      for preset in AmbeoEndpoint.Audio.Preset.allPresets {
-        await client.register(AmbeoEndpoint.Audio.AmbeoLevel(preset: preset))
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await client.register(AmbeoEndpoint.Player.Volume()) }
+        group.addTask { await client.register(AmbeoEndpoint.Player.Mute()) }
+        group.addTask { await client.register(AmbeoEndpoint.Audio.Preset()) }
+        group.addTask { await client.register(AmbeoEndpoint.Audio.AmbeoMode()) }
+        for preset in AmbeoEndpoint.Audio.Preset.allPresets {
+          group.addTask { await client.register(AmbeoEndpoint.Audio.AmbeoLevel(preset: preset)) }
+        }
+        group.addTask { await client.register(AmbeoEndpoint.Audio.NightMode()) }
+        group.addTask { await client.register(AmbeoEndpoint.Audio.VoiceEnhancement()) }
+        group.addTask { await client.register(AmbeoEndpoint.Audio.EcoMode()) }
+        group.addTask { await client.register(AmbeoEndpoint.System.MaxIdleTime()) }
+        group.addTask { await client.register(AmbeoEndpoint.System.Power()) }
+        group.addTask { await client.register(AmbeoEndpoint.Audio.DecoderAudioFormat()) }
       }
-      await client.register(AmbeoEndpoint.Audio.NightMode())
-      await client.register(AmbeoEndpoint.Audio.VoiceEnhancement())
-      await client.register(AmbeoEndpoint.Audio.EcoMode())
-      await client.register(AmbeoEndpoint.System.MaxIdleTime())
-      await client.register(AmbeoEndpoint.System.Power())
-      await client.register(AmbeoEndpoint.Audio.DecoderAudioFormat())
       await client.startObserving()
       await client.markInitialSyncCompleted()
 
       let initialSoundbarAtmos = await client.state.audioFormat?.isAtmos == true
-      await self.evaluateAtmosState(soundbarAtmos: initialSoundbarAtmos)
+      self.evaluateAtmosState(soundbarAtmos: initialSoundbarAtmos)
     }
   }
 
@@ -237,7 +251,7 @@ final class AppModel: Sendable {
     let wasAtmos = self.isCoreAudioAtmos
     let isAtmos = format?.isAtmosOrMultichannel == true
 
-    await self.evaluateAtmosState(coreAudioAtmos: isAtmos)
+    self.evaluateAtmosState(coreAudioAtmos: isAtmos)
 
     // If switching from Atmos/multichannel back to stereo, enforce fallback format
     if wasAtmos && !isAtmos {
@@ -378,7 +392,7 @@ final class AppModel: Sendable {
         Logger.audio.debug(
           "Soundbar audio format: codec=\(fmt?.codec ?? "none"), channels=\(fmt?.channels ?? 0), isAtmos=\(soundbarAtmos)"
         )
-        await self.evaluateAtmosState(soundbarAtmos: soundbarAtmos)
+        self.evaluateAtmosState(soundbarAtmos: soundbarAtmos)
       }
 
       // If change was triggered externally (remote control, hardware buttons, app),
@@ -398,7 +412,12 @@ final class AppModel: Sendable {
 
         if osdEligiblePaths.contains(path) {
           Logger.lifecycle.debug("External change detected on [\(path)]. Displaying synced OSD.")
-          await self.syncAndShowOverlay()
+          self.lastOSDTask?.cancel()
+          self.lastOSDTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled, let self else { return }
+            await self.syncAndShowOverlay()
+          }
         } else {
           Logger.lifecycle.debug("External change detected on [\(path)]. Suppressing OSD (not eligible).")
         }
@@ -408,7 +427,7 @@ final class AppModel: Sendable {
 
   // MARK: - Dolby Atmos & Atmos Boost Management
 
-  private func evaluateAtmosState(coreAudioAtmos: Bool? = nil, soundbarAtmos: Bool? = nil) async {
+  private func evaluateAtmosState(coreAudioAtmos: Bool? = nil, soundbarAtmos: Bool? = nil) {
     if let ca = coreAudioAtmos { isCoreAudioAtmos = ca }
     if let sa = soundbarAtmos { isSoundbarAtmos = sa }
 
@@ -426,7 +445,10 @@ final class AppModel: Sendable {
 
       guard !isAtmosActive else { return }
       isAtmosActive = true
-      await handleAtmosTransition(isAtmos: true)
+      atmosTransitionTask?.cancel()
+      atmosTransitionTask = Task { @MainActor [weak self] in
+        await self?.handleAtmosTransition(isAtmos: true)
+      }
     } else {
       // Atmos is not currently detected
       guard isAtmosActive else {

@@ -19,14 +19,12 @@ public struct Stringified<T: LosslessStringConvertible>: Decodable, Sendable whe
 }
 
 public struct AmbeoValueContainer<T: Decodable>: Decodable {
-  public let type: String
   public let decodedValue: T
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: DynamicKey.self)
 
     let typeKey = try container.decode(String.self, forKey: DynamicKey(stringValue: "type")!)
-    self.type = typeKey
 
     guard let key = DynamicKey(stringValue: typeKey) else {
       throw DecodingError.dataCorruptedError(
