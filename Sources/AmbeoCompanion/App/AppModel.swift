@@ -143,10 +143,12 @@ final class AppModel: Sendable {
     let previousClient = ambeoClient
     ambeoClient = nil
 
-    isAtmosActive = false
+    // Preserve boost state across reconnections to prevent double-boosting.
+    // If a boost was already applied to the soundbar hardware, resetting appliedAtmosBoost to 0
+    // would cause the re-established client to apply another boost on top (+25% twice).
+    isAtmosActive = appliedAtmosBoost > 0
     isCoreAudioAtmos = false
     isSoundbarAtmos = false
-    appliedAtmosBoost = 0
 
     let uid = settings.ambeoUid
     let host = networkDevices.first(where: { $0.uuid == uid })?.ip
@@ -267,6 +269,10 @@ final class AppModel: Sendable {
   ) async {
     let wasAtmos = self.isCoreAudioAtmos
     let isAtmos = format?.isAtmosOrMultichannel == true
+
+    Logger.audio.info(
+      "Audio format on [\(device.name)]: \(format?.displayName ?? "unknown") (formatID=\(format?.formatID ?? 0) '\(format?.fourCCString ?? "")', isAtmosOrMultichannel=\(isAtmos))"
+    )
 
     self.evaluateAtmosState(coreAudioAtmos: isAtmos)
 
@@ -578,6 +584,10 @@ final class AppModel: Sendable {
         self.startDiscoveringAmbeo()
         self.startMonitoringAudioDevice()
         if self.settings.mediaKeyEnabled { self.startMonitoringSystemEvent() }
+        // Reconnect client if configured
+        if self.ambeoClient == nil, !self.settings.ambeoUid.isEmpty {
+          self.reconnectAmbeoClient()
+        }
         Logger.lifecycle.info("Wake from sleep")
       }
     }
@@ -593,6 +603,35 @@ final class AppModel: Sendable {
         self.discoveringAmbeoTask?.cancel()
         self.monitoringSystemEventTask?.cancel()
         self.clientTask?.cancel()
+        // Revert Atmos Boost before sleeping if active, so the soundbar doesn't stay boosted while sleeping
+        if self.appliedAtmosBoost > 0, let client = self.ambeoClient {
+          let boost = self.appliedAtmosBoost
+          let current = await client.state.volume
+          let minVol =
+            (await client.getEntry(for: AmbeoEndpoint.Player.Volume()))?.edit.flatMap { $0.min } ?? 0
+          let newVol = max(minVol, current - boost)
+          do {
+            try await client.set(
+              AmbeoEndpoint.Player.Volume(),
+              valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
+            )
+            self.appliedAtmosBoost = 0
+            self.isAtmosActive = false
+            self.isCoreAudioAtmos = false
+            self.isSoundbarAtmos = false
+            Logger.audio.info("Atmos Boost reverted before sleep: \(current) → \(newVol) (-\(boost)%)")
+          } catch {
+            Logger.audio.warning(
+              "Failed to revert Atmos Boost before sleep: \(error.localizedDescription). Preserving boost state across wake."
+            )
+          }
+        }
+
+        let client = self.ambeoClient
+        self.ambeoClient = nil
+        self.clientGeneration += 1
+        await client?.stopObserving()
+
         Logger.lifecycle.info("Will sleep")
       }
     }

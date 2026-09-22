@@ -41,13 +41,29 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
       try container.decodeIfPresent(UInt32.self, forKey: .formatID) ?? kAudioFormatLinearPCM
   }
 
+  public var fourCCString: String {
+    let bytes: [UInt8] = [
+      UInt8((formatID >> 24) & 0xFF),
+      UInt8((formatID >> 16) & 0xFF),
+      UInt8((formatID >> 8) & 0xFF),
+      UInt8(formatID & 0xFF),
+    ]
+    return bytes.map { b in
+      (b >= 32 && b <= 126) ? String(UnicodeScalar(b)) : String(format: "\\x%02x", b)
+    }.joined()
+  }
+
   public var displayName: String {
     let hz = sampleRate / 1000.0
     let hzString =
       hz.truncatingRemainder(dividingBy: 1) == 0
       ? String(format: "%.0f", hz)
       : String(format: "%.1f", hz)
-    return "\(channels)ch \(bitDepth)-bit \(hzString)kHz"
+    if formatID == kAudioFormatLinearPCM {
+      return "\(channels)ch \(bitDepth)-bit \(hzString)kHz"
+    } else {
+      return "\(channels)ch \(bitDepth)-bit \(hzString)kHz ['\(fourCCString)']"
+    }
   }
 
   public var distanceFrom48kHz: Double {
@@ -55,19 +71,48 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
   }
 
   public var isAtmosOrMultichannel: Bool {
-    channels > 2
-      || formatID == EncodedAudioFormatID.dolbyMAT2
-      || formatID == EncodedAudioFormatID.dolbyMATPlus
-      || formatID == EncodedAudioFormatID.dolbyDigitalPlus
-      || formatID == EncodedAudioFormatID.trueHD
+    channels > 2 || EncodedAudioFormatID.isEncodedSurround(formatID: formatID)
   }
 }
 
 private enum EncodedAudioFormatID {
-  static let dolbyMAT2 = fourCC("mat$")
-  static let dolbyMATPlus = fourCC("mat+")
-  static let dolbyDigitalPlus = fourCC("cea3")
+  // Apple / CoreAudio 内部識別子 (実機で取得されるビットストリーム識別子)
+  static let dolbyMATInternal = fourCC("mtct")          // 1_836_344_180 (Dolby MAT)
+  static let dolbyMATPlusInternal = fourCC("mtc+")      // 1_836_344_107 (Dolby MAT + Atmos)
+  static let dolbyDigitalPlusInternal = fourCC("cd+3")    // 1_667_509_043 (Dolby Digital Plus)
+  static let enhancedAC3Internal = fourCC("cec3")       // 1_667_588_915 (Enhanced AC-3)
+
+  // Apple 公式オーディオトラック / CoreAudio 標準定義
+  static let enhancedAC3 = fourCC("ec-3")               // kAudioFormatEnhancedAC3
+  static let enhancedAC3JOC = fourCC("ec+3")            // Enhanced AC-3 with JOC (Dolby Atmos)
+  static let dolbyDigital = fourCC("ac-3")              // kAudioFormatAC3
+  static let dolbyDigital60958 = fourCC("cac3")         // kAudioFormat60958AC3
+
+  // 一般的な FourCC 定義
+  static let dolbyMATStandard = fourCC("mat$")
+  static let dolbyMATPlusStandard = fourCC("mat+")
   static let trueHD = fourCC("cmlp")
+  static let legacyCEA3 = fourCC("cea3")
+
+  static func isEncodedSurround(formatID: UInt32) -> Bool {
+    switch formatID {
+    case dolbyMATInternal,
+      dolbyMATPlusInternal,
+      dolbyDigitalPlusInternal,
+      enhancedAC3Internal,
+      enhancedAC3,
+      enhancedAC3JOC,
+      dolbyDigital,
+      dolbyDigital60958,
+      dolbyMATStandard,
+      dolbyMATPlusStandard,
+      trueHD,
+      legacyCEA3:
+      return true
+    default:
+      return false
+    }
+  }
 
   private static func fourCC(_ code: String) -> UInt32 {
     code.utf8.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
