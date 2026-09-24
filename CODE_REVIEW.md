@@ -613,3 +613,10 @@ self.updateFormatMonitoringForActiveDevice()   // デフォルトデバイス変
 **修正**: `AudioDeviceMonitor` の 3 つのストリーム（`defaultDeviceStream` / `outputDevicesStream` / `formatStream`）すべてで、`onTermination` からリスナーの削除と `StreamContext` の解放を専用のシリアルキューへ `async` で逃がすようにした。cancel 側がすぐにロックを手放すので、リスナーの `yield` が完了し、その後で削除が進む。削除は実行中のリスナーを待つので、解放後にコンテキストへ触れることはない。
 
 **発生条件と追加の対応（9/24 レビュー #10 を実施）**: macOS は、Atmos パススルーで再生している最中に他のアプリが音を出すと、デフォルト出力を一時的に別のデバイスへ切り替え、その後で元に戻す。ターゲットデバイスを設定している場合、監視しているデバイスは変わらないのに、切り替えのたびにフォーマット監視を作り直していた。これがデッドロックを起こしやすくしていた。`startMonitoringFormat` は、監視しているデバイス ID と出力ストリーム ID が前回と同じならストリームを作り直さない。ストリーム ID も比べるのは、抜き差しでデバイス ID が同じまま中のストリームが作り直された場合に監視漏れを防ぐため（見送ったときの懸念への対処）。
+
+### 検証（2026-09-25）
+
+- **デッドロック修正**: 診断（cancel 側が `RemovePropertyListener` で実行中リスナー完了待ち、リスナー側が `yield` で同じステータスロック待ち）が `sample` のスタックと一致。`onTermination` をシリアルキューへ `async` で逃がす標準的な修正で、ロック解放 → `yield` 完了 → キュー上で削除、の順序が成立。3 ストリームすべてで統一され、同期削除の残りはゼロ。`RemovePropertyListener` が「実行中コールバック完了待ち → リスト除去 → return」するため、その後の `Unmanaged.release()` は use-after-free にならない
+- **副修正**: ストリーム ID まで比較して既存監視を維持する判断は、#10 見送りの懸念（デバイス ID 同一・ストリーム再作成）を正しく処理。`AppModel` が `@MainActor` のため `monitoredFormatSource` / `monitoringFormatTask` の変更は直列化されレースなし。`SystemEventMonitor`（v0.1.8 対応）と `SennheiserDiscovery`（`NWBrowser.cancel()` は非ブロッキング、コールバックは専用キュー経由）は同種デッドロックに該当せず、CoreAudio 3 箇所の網羅で十分
+- **残る理論的エッジ（実害なし）**: `monitoringFormatTask` が完了済みの状態で同じデバイス ID + 同じストリーム ID が再来すると、`!= nil` 判定で早期 return して監視が止まる窓がある。ただし CoreAudio は再接続時にストリーム ID を再割り当てするため、現実の抜き差しでは `source.stream == streamID` が外れて再購読される
+- `swift build`（Swift 6.3）は警告ゼロ
