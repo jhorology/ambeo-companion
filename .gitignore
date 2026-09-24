@@ -26,7 +26,6 @@ tramp
 /Logs
 AmbeoCompanion.app
 *.app
-CODE_REVIEW.md
 
 # --- macOS ---
 .DS_Store
