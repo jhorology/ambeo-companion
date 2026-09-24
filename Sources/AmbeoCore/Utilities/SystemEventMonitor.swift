@@ -80,10 +80,15 @@ extension SystemEvent {
 
 // MARK: - Monitor
 public struct SystemEventMonitor {
-  private class Context: @unchecked Sendable {
+  private final class Context: @unchecked Sendable {
     let shouldIntercept: @Sendable (SystemEvent) -> Bool
     let continuation: AsyncStream<SystemEvent>.Continuation
-    var runLoop: CFRunLoop?
+    /// Set once before the monitor thread starts; read only from that thread's callback.
+    var eventTap: CFMachPort?
+
+    private let lock = NSLock()
+    private var runLoop: CFRunLoop?
+    private var stopped = false
 
     init(
       shouldIntercept: @escaping @Sendable (SystemEvent) -> Bool,
@@ -91,6 +96,24 @@ public struct SystemEventMonitor {
     ) {
       self.shouldIntercept = shouldIntercept
       self.continuation = continuation
+    }
+
+    /// Called by the monitor thread. Returns false when the stream already ended.
+    func attach(_ rl: CFRunLoop) -> Bool {
+      lock.withLock {
+        runLoop = rl
+        return !stopped
+      }
+    }
+
+    var isStopped: Bool { lock.withLock { stopped } }
+
+    func stop() {
+      let rl = lock.withLock {
+        stopped = true
+        return runLoop
+      }
+      if let rl { CFRunLoopStop(rl) }
     }
   }
 
@@ -104,6 +127,23 @@ public struct SystemEventMonitor {
       let callback: CGEventTapCallBack = { proxy, type, event, refcon in
         guard let refcon = refcon else { return Unmanaged.passRetained(event) }
         let ctx = Unmanaged<Context>.fromOpaque(refcon).takeUnretainedValue()
+
+        // The system disables an active tap when callbacks are slow or input monitoring is revoked.
+        switch type {
+        case .tapDisabledByTimeout:
+          Logger.lifecycle.warning("Media key event tap was disabled by timeout. Re-enabling.")
+          if let tap = ctx.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+          return Unmanaged.passUnretained(event)
+        case .tapDisabledByUserInput:
+          Logger.lifecycle.warning(
+            "Media key event tap was disabled by user input. Check Input Monitoring / Accessibility permissions."
+          )
+          if let tap = ctx.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+          return Unmanaged.passUnretained(event)
+        default:
+          break
+        }
+
         if let nsEvent = NSEvent(cgEvent: event), let systemEvent = SystemEvent(from: nsEvent) {
           if ctx.shouldIntercept(systemEvent) {
 
@@ -133,6 +173,7 @@ public struct SystemEventMonitor {
         Unmanaged<Context>.fromOpaque(bridge).release()
         return
       }
+      context.eventTap = eventTap
 
       nonisolated(unsafe) let safeEventTap = eventTap
       nonisolated(unsafe) let safeBridge = bridge
@@ -142,23 +183,29 @@ public struct SystemEventMonitor {
         0
       )
 
+      // The thread owns the tap: it tears it down and releases the context only after its
+      // run loop has exited, so the callback never sees a released context.
       let thread = Thread {
-        let currentRL = CFRunLoopGetCurrent()
-        context.runLoop = currentRL
-        CFRunLoopAddSource(currentRL, runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: safeEventTap, enable: true)
-        CFRunLoopRun()
+        if let currentRL = CFRunLoopGetCurrent(), context.attach(currentRL) {
+          CFRunLoopAddSource(currentRL, runLoopSource, .commonModes)
+          CGEvent.tapEnable(tap: safeEventTap, enable: true)
+          // A CFRunLoopStop issued before the loop starts is lost, so re-check the flag periodically.
+          while !context.isStopped {
+            CFRunLoopRunInMode(.defaultMode, 1.0, false)
+          }
+          CFRunLoopRemoveSource(currentRL, runLoopSource, .commonModes)
+        }
+        CGEvent.tapEnable(tap: safeEventTap, enable: false)
+        CFMachPortInvalidate(safeEventTap)
+        Unmanaged<Context>.fromOpaque(safeBridge).release()
+        Logger.lifecycle.trace("System event monitor thread has exited.")
       }
       thread.name = "SystemEventMonitorThread"
       thread.start()
       Logger.lifecycle.trace("System event monitor has started.")
 
       continuation.onTermination = { @Sendable _ in
-        if let rl = context.runLoop {
-          CFRunLoopStop(rl)
-        }
-        CGEvent.tapEnable(tap: safeEventTap, enable: false)
-        Unmanaged<Context>.fromOpaque(safeBridge).release()
+        context.stop()
         Logger.lifecycle.trace("System event monitor has terminated.")
       }
     }

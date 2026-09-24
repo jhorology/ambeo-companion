@@ -75,7 +75,9 @@ final class AppModel: Sendable {
           to: settings.atmosBoostAmount
         )
       }
-      if settings.autoStandbySeconds != oldValue.autoStandbySeconds {
+      if settings.autoStandbySeconds != oldValue.autoStandbySeconds,
+        settings.autoStandbySeconds != maxIdleTime
+      {
         Task { [weak self] in
           await self?.syncAutoStandbyToSoundbar()
         }
@@ -415,10 +417,15 @@ final class AppModel: Sendable {
     case .mute:
       let isMuted = await client.state.isMuted
       let newMute = !isMuted
-      try? await client.set(
-        AmbeoEndpoint.Player.Mute(),
-        valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMute)}"
-      )
+      do {
+        try await client.set(
+          AmbeoEndpoint.Player.Mute(),
+          valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMute)}"
+        )
+      } catch {
+        Logger.audio.warning("Media key: failed to set mute (\(error.localizedDescription))")
+        return
+      }
       await syncAndShowOverlay(explicitMute: newMute)
 
     case .soundUp, .soundDown:
@@ -431,10 +438,15 @@ final class AppModel: Sendable {
       let newVol = max(minVol, min(maxVol, current + delta))
       // Position within the device min...max range. AMBEO uses 0...100, so this matches the hardware step.
       let pct = maxVol > minVol ? Double(newVol - minVol) / Double(maxVol - minVol) : 0.0
-      try? await client.set(
-        AmbeoEndpoint.Player.Volume(),
-        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
-      )
+      do {
+        try await client.set(
+          AmbeoEndpoint.Player.Volume(),
+          valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
+        )
+      } catch {
+        Logger.audio.warning("Media key: failed to set volume (\(error.localizedDescription))")
+        return
+      }
       await syncAndShowOverlay(explicitVolume: pct, explicitMute: false)
 
     default:
@@ -523,10 +535,7 @@ final class AppModel: Sendable {
 
       guard !isAtmosActive else { return }
       isAtmosActive = true
-      atmosTransitionTask?.cancel()
-      atmosTransitionTask = Task { @MainActor [weak self] in
-        await self?.handleAtmosTransition(isAtmos: true)
-      }
+      enqueueAtmosWork { await $0.handleAtmosTransition(isAtmos: true) }
     } else {
       // Atmos is not currently detected
       guard isAtmosActive else {
@@ -544,13 +553,41 @@ final class AppModel: Sendable {
         guard !Task.isCancelled, let self else { return }
         self.atmosDeactivationTask = nil
         self.isAtmosActive = false
-        await self.handleAtmosTransition(isAtmos: false)
+        self.enqueueAtmosWork { await $0.handleAtmosTransition(isAtmos: false) }
       }
     }
   }
 
+  /// Runs Atmos Boost volume changes one at a time, so an apply and a revert never race on the soundbar.
+  /// Work already sent to the soundbar is never cancelled mid-request; stale work checks `isAtmosActive` and skips.
+  private func enqueueAtmosWork(_ work: @escaping @MainActor (AppModel) async -> Void) {
+    let previous = atmosTransitionTask
+    atmosTransitionTask = Task { @MainActor [weak self] in
+      await previous?.value
+      guard !Task.isCancelled, let self else { return }
+      await work(self)
+    }
+  }
+
+  /// Sets the soundbar volume for Atmos Boost. `appliedAtmosBoost` is updated by the caller only when this succeeds.
+  private func setBoostVolume(_ client: AmbeoClient, to volume: Int, action: String) async -> Bool {
+    do {
+      try await client.set(
+        AmbeoEndpoint.Player.Volume(),
+        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(volume)}"
+      )
+      return true
+    } catch {
+      Logger.audio.warning(
+        "Atmos Boost \(action) failed: \(error.localizedDescription). Keeping boost state (\(appliedAtmosBoost)%)."
+      )
+      return false
+    }
+  }
+
   private func handleAtmosTransition(isAtmos: Bool) async {
-    guard let client = ambeoClient else { return }
+    // A later transition may have flipped the state while this one waited in the queue.
+    guard isAtmos == isAtmosActive, let client = ambeoClient else { return }
 
     if isAtmos {
       Logger.audio.info(
@@ -560,16 +597,14 @@ final class AppModel: Sendable {
         let boost = Int(settings.atmosBoostAmount)
         guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
         let current = await client.state.volume
+        guard !Task.isCancelled, isAtmosActive else { return }
         let minVol = entry.edit.flatMap { $0.min } ?? 0
         let maxVol = entry.edit.flatMap { $0.max } ?? 100
         let newVol = max(minVol, min(maxVol, current + boost))
         let actualBoost = newVol - current
-        appliedAtmosBoost = actualBoost
 
-        try? await client.set(
-          AmbeoEndpoint.Player.Volume(),
-          valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
-        )
+        guard await setBoostVolume(client, to: newVol, action: "apply") else { return }
+        appliedAtmosBoost = actualBoost
         Logger.audio.info("Atmos Boost applied: \(current) → \(newVol) (+\(actualBoost)%)")
         await syncAndShowOverlay()
       }
@@ -578,16 +613,14 @@ final class AppModel: Sendable {
       if appliedAtmosBoost > 0 {
         guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
         let current = await client.state.volume
+        guard !Task.isCancelled, !isAtmosActive else { return }
         let minVol = entry.edit.flatMap { $0.min } ?? 0
         let maxVol = entry.edit.flatMap { $0.max } ?? 100
-        let newVol = max(minVol, min(maxVol, current - appliedAtmosBoost))
         let revertedBoost = appliedAtmosBoost
-        appliedAtmosBoost = 0
+        let newVol = max(minVol, min(maxVol, current - revertedBoost))
 
-        try? await client.set(
-          AmbeoEndpoint.Player.Volume(),
-          valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
-        )
+        guard await setBoostVolume(client, to: newVol, action: "revert") else { return }
+        appliedAtmosBoost = 0
         Logger.audio.info("Atmos Boost reverted: \(current) → \(newVol) (-\(revertedBoost)%)")
         await syncAndShowOverlay()
       }
@@ -596,28 +629,26 @@ final class AppModel: Sendable {
 
   private func handleAtmosBoostAmountChanged(from oldAmount: Double, to newAmount: Double) {
     guard isAtmosActive else { return }
-    let newBoost = Int(newAmount)
-    let delta = newBoost - appliedAtmosBoost
-    guard delta != 0 else { return }
 
-    Task {
-      guard let client = self.ambeoClient else { return }
+    enqueueAtmosWork { model in
+      guard model.isAtmosActive, let client = model.ambeoClient else { return }
+      // Read the target at run time: several slider changes may be queued.
+      let delta = Int(model.settings.atmosBoostAmount) - model.appliedAtmosBoost
+      guard delta != 0 else { return }
       guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
       let current = await client.state.volume
+      guard !Task.isCancelled, model.isAtmosActive else { return }
       let minVol = entry.edit.flatMap { $0.min } ?? 0
       let maxVol = entry.edit.flatMap { $0.max } ?? 100
       let newVol = max(minVol, min(maxVol, current + delta))
       let actualDelta = newVol - current
-      self.appliedAtmosBoost = max(0, self.appliedAtmosBoost + actualDelta)
 
-      try? await client.set(
-        AmbeoEndpoint.Player.Volume(),
-        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
-      )
+      guard await model.setBoostVolume(client, to: newVol, action: "adjust") else { return }
+      model.appliedAtmosBoost = max(0, model.appliedAtmosBoost + actualDelta)
       Logger.audio.info(
         "Atmos Boost adjusted: \(current) → \(newVol) (\(actualDelta >= 0 ? "+" : "")\(actualDelta)%)"
       )
-      await self.syncAndShowOverlay()
+      await model.syncAndShowOverlay()
     }
   }
 
@@ -652,6 +683,8 @@ final class AppModel: Sendable {
         self.discoveringAmbeoTask?.cancel()
         self.monitoringSystemEventTask?.cancel()
         self.clientTask?.cancel()
+        // Let an in-flight apply/revert finish so appliedAtmosBoost matches the soundbar.
+        await self.atmosTransitionTask?.value
         // Revert Atmos Boost before sleeping if active, so the soundbar doesn't stay boosted while sleeping
         if self.appliedAtmosBoost > 0, let client = self.ambeoClient {
           let boost = self.appliedAtmosBoost
@@ -685,6 +718,19 @@ final class AppModel: Sendable {
         await client?.stopObserving()
 
         Logger.lifecycle.info("Will sleep")
+      }
+    }
+
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      // The debounced save may still be pending when the app quits.
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.saveTask?.cancel()
+        self.saveSettings()
       }
     }
 
@@ -771,10 +817,15 @@ final class AppModel: Sendable {
     guard let client = ambeoClient else { return }
     let current = await client.state.isAmbeoMode
     let newMode = !current
-    try? await client.set(
-      AmbeoEndpoint.Audio.AmbeoMode(),
-      valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMode)}"
-    )
+    do {
+      try await client.set(
+        AmbeoEndpoint.Audio.AmbeoMode(),
+        valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMode)}"
+      )
+    } catch {
+      Logger.audio.warning("Shortcut: failed to set AMBEO Mode (\(error.localizedDescription))")
+      return
+    }
     Logger.audio.info("Shortcut: AMBEO Mode -> \(newMode)")
     await syncAndShowOverlay()
   }
@@ -791,10 +842,15 @@ final class AppModel: Sendable {
     }
     let preset = await client.state.preset
     let endpoint = AmbeoEndpoint.Audio.AmbeoLevel(preset: preset)
-    try? await client.set(
-      endpoint,
-      valueJSON: "{\"type\":\"popcornAmbeoModeLevel\",\"popcornAmbeoModeLevel\":\"\(nextLevel)\"}"
-    )
+    do {
+      try await client.set(
+        endpoint,
+        valueJSON: "{\"type\":\"popcornAmbeoModeLevel\",\"popcornAmbeoModeLevel\":\"\(nextLevel)\"}"
+      )
+    } catch {
+      Logger.audio.warning("Shortcut: failed to set AMBEO Level (\(error.localizedDescription))")
+      return
+    }
     Logger.audio.info("Shortcut: AMBEO Level (\(preset)) -> \(nextLevel)")
     await syncAndShowOverlay()
   }
@@ -809,10 +865,15 @@ final class AppModel: Sendable {
     } else {
       nextPreset = "adaptive"
     }
-    try? await client.set(
-      AmbeoEndpoint.Audio.Preset(),
-      valueJSON: "{\"type\":\"popcornAudioPreset\",\"popcornAudioPreset\":\"\(nextPreset)\"}"
-    )
+    do {
+      try await client.set(
+        AmbeoEndpoint.Audio.Preset(),
+        valueJSON: "{\"type\":\"popcornAudioPreset\",\"popcornAudioPreset\":\"\(nextPreset)\"}"
+      )
+    } catch {
+      Logger.audio.warning("Shortcut: failed to set Preset (\(error.localizedDescription))")
+      return
+    }
     Logger.audio.info("Shortcut: Preset -> \(nextPreset)")
     await syncAndShowOverlay()
   }
@@ -821,10 +882,15 @@ final class AppModel: Sendable {
     guard let client = ambeoClient else { return }
     let current = await client.state.isNightMode
     let newNight = !current
-    try? await client.set(
-      AmbeoEndpoint.Audio.NightMode(),
-      valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newNight)}"
-    )
+    do {
+      try await client.set(
+        AmbeoEndpoint.Audio.NightMode(),
+        valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newNight)}"
+      )
+    } catch {
+      Logger.audio.warning("Shortcut: failed to set Night Mode (\(error.localizedDescription))")
+      return
+    }
     Logger.audio.info("Shortcut: Night Mode -> \(newNight)")
     await syncAndShowOverlay()
   }
@@ -833,10 +899,17 @@ final class AppModel: Sendable {
     guard let client = ambeoClient else { return }
     let current = await client.state.isVoiceEnhancement
     let newVoice = !current
-    try? await client.set(
-      AmbeoEndpoint.Audio.VoiceEnhancement(),
-      valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newVoice)}"
-    )
+    do {
+      try await client.set(
+        AmbeoEndpoint.Audio.VoiceEnhancement(),
+        valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newVoice)}"
+      )
+    } catch {
+      Logger.audio.warning(
+        "Shortcut: failed to set Voice Enhancement (\(error.localizedDescription))"
+      )
+      return
+    }
     Logger.audio.info("Shortcut: Voice Enhancement -> \(newVoice)")
     await syncAndShowOverlay()
   }
@@ -857,11 +930,6 @@ final class AppModel: Sendable {
         "Failed to sync Auto Standby to soundbar: \(error.localizedDescription)"
       )
     }
-  }
-
-  func setMaxIdleTime(_ seconds: Int) async {
-    settings.autoStandbySeconds = seconds
-    await syncAutoStandbyToSoundbar()
   }
 
   func wakeUpSoundbar() async {

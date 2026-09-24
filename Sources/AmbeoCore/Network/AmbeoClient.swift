@@ -303,6 +303,9 @@ public actor AmbeoClient {
       guard let regUrl = regComponents.url else { return nil }
       _ = try await session.data(from: regUrl)
 
+      // Echoes of earlier sets will not arrive on a new queue. Stale tokens would hide a later
+      // remote-control change to the same value, so drop them.
+      expectedEchoValues.removeAll()
       Logger.network.info("Subscribed queue [\(rawQId)] to \(pathsToSubscribe.count) paths.")
       return rawQId
 

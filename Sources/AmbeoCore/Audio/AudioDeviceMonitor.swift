@@ -425,6 +425,7 @@ public final class AudioDeviceMonitor: Sendable {
     let streamIds = property(
       for: id,
       selector: kAudioDevicePropertyStreams,
+      scope: kAudioDevicePropertyScopeOutput,
       type: AudioStreamID.self
     )
     guard let streamId = streamIds.first else { return }
@@ -438,17 +439,34 @@ public final class AudioDeviceMonitor: Sendable {
     var asbd = AudioStreamBasicDescription()
     var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
 
-    // load currnt status
-    let getStatus = AudioObjectGetPropertyData(streamId, &address, 0, nil, &size, &asbd)
-    guard getStatus == noErr else { return }
+    // Prefer the device's own description of the target format: it carries the matching
+    // format ID and flags. Copying only rate/channels/bits onto the current ASBD would keep
+    // an encoded format ID (e.g. 'cc+3' right after Atmos playback) or the wrong LPCM flags.
+    let available = property(
+      for: streamId,
+      selector: kAudioStreamPropertyAvailablePhysicalFormats,
+      type: AudioStreamRangedDescription.self
+    ).map(\.mFormat)
+    if let match = available.first(where: {
+      $0.mFormatID == format.formatID
+        && $0.mChannelsPerFrame == format.channels
+        && $0.mBitsPerChannel == format.bitDepth
+        && $0.mSampleRate == format.sampleRate
+    }) {
+      asbd = match
+    } else {
+      let getStatus = AudioObjectGetPropertyData(streamId, &address, 0, nil, &size, &asbd)
+      guard getStatus == noErr else { return }
 
-    asbd.mSampleRate = format.sampleRate
-    asbd.mChannelsPerFrame = format.channels
-    asbd.mBitsPerChannel = format.bitDepth
+      asbd.mFormatID = format.formatID
+      asbd.mSampleRate = format.sampleRate
+      asbd.mChannelsPerFrame = format.channels
+      asbd.mBitsPerChannel = format.bitDepth
 
-    let bytesPerSample = format.bitDepth / 8
-    asbd.mBytesPerFrame = bytesPerSample * format.channels
-    asbd.mBytesPerPacket = asbd.mBytesPerFrame * asbd.mFramesPerPacket
+      let bytesPerSample = format.bitDepth / 8
+      asbd.mBytesPerFrame = bytesPerSample * format.channels
+      asbd.mBytesPerPacket = asbd.mBytesPerFrame * asbd.mFramesPerPacket
+    }
 
     let setStatus = AudioObjectSetPropertyData(
       streamId,
@@ -516,9 +534,11 @@ public final class AudioDeviceMonitor: Sendable {
     let count = Int(size) / MemoryLayout<T>.size
 
     return [T](unsafeUninitializedCapacity: count) { buffer, initializedCount in
+      // `size` is in/out: the property can shrink between the two calls (e.g. a device is
+      // unplugged), so count only what was actually written.
       let status = AudioObjectGetPropertyData(id, &address, 0, nil, &size, buffer.baseAddress!)
       if status == noErr {
-        initializedCount = count
+        initializedCount = min(count, Int(size) / MemoryLayout<T>.size)
       } else {
         initializedCount = 0
       }

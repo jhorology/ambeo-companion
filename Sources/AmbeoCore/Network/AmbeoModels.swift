@@ -26,14 +26,14 @@ public struct AmbeoValueContainer<T: Decodable>: Decodable {
 
     let typeKey = try container.decode(String.self, forKey: DynamicKey(stringValue: "type")!)
 
-    guard let key = DynamicKey(stringValue: typeKey) else {
+    guard !typeKey.isEmpty else {
       throw DecodingError.dataCorruptedError(
         forKey: DynamicKey(stringValue: "type")!,
         in: container,
-        debugDescription: "Invalid key"
+        debugDescription: "Empty value type"
       )
     }
-    self.decodedValue = try container.decode(T.self, forKey: key)
+    self.decodedValue = try container.decode(T.self, forKey: DynamicKey(stringValue: typeKey)!)
   }
 }
 

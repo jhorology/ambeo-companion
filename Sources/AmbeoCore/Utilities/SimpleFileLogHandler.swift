@@ -83,16 +83,19 @@ public struct SimpleFileLogHandler: LogHandler {
         "\n   📌 Stack Trace:\n   " + symbols.joined(separator: "\n   ")
     }
 
-    let color = getColor(level)
-    let reset = "\u{001B}[0m"
+    let levelTag = "[\(level.rawValue.uppercased())]"
+    let body =
+      "[\(threadName)] [\(category)] \(fileName):\(line) \(function) ➔ \(message)\(metaString)\(stackString)\n"
 
-    let logLine =
-      "\(timestamp) \(getEmoji(level)) \(color)[\(level.rawValue.uppercased())]\(reset) [\(threadName)] [\(category)] \(fileName):\(line) \(function) ➔ \(message)\(metaString)\(stackString)\n"
-
+    // ANSI colors go to the console only; they would corrupt the log file.
     if config.isConsoleEnabled {
-      print(logLine, terminator: "")
+      let reset = "\u{001B}[0m"
+      print(
+        "\(timestamp) \(getEmoji(level)) \(getColor(level))\(levelTag)\(reset) \(body)",
+        terminator: ""
+      )
     }
-    writeWithRotation(logLine)
+    writeWithRotation("\(timestamp) \(getEmoji(level)) \(levelTag) \(body)")
   }
 
   private func demangle(symbol: String) -> String {
