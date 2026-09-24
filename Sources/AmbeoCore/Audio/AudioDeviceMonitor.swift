@@ -77,20 +77,20 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
 
 private enum EncodedAudioFormatID {
   // Apple / CoreAudio 内部ビットストリーム識別子 (HDMI / eARC で実測・ネゴシエーションされる識別子)
-  static let dolbyEAC3CCPlus3 = fourCC("cc+3")          // 1_667_443_507 (実機ログで実測: 2ch 16-bit 192kHz ['cc+3'])
-  static let dolbyEAC3CDPlus3 = fourCC("cd+3")          // 1_667_509_043
-  static let enhancedAC3Internal = fourCC("cec3")       // 1_667_588_915
+  static let dolbyEAC3CCPlus3 = fourCC("cc+3")  // 1_667_443_507 (実機ログで実測: 2ch 16-bit 192kHz ['cc+3'])
+  static let dolbyEAC3CDPlus3 = fourCC("cd+3")  // 1_667_509_043
+  static let enhancedAC3Internal = fourCC("cec3")  // 1_667_588_915
   static let dolbyMATInternalA = fourCC("mtat")
   static let dolbyMATInternalB = fourCC("mtbt")
-  static let dolbyMATInternalC = fourCC("mtct")         // 1_836_344_180 (Dolby MAT)
+  static let dolbyMATInternalC = fourCC("mtct")  // 1_836_344_180 (Dolby MAT)
   static let dolbyMATPlusInternalB = fourCC("mtb+")
-  static let dolbyMATPlusInternalC = fourCC("mtc+")     // 1_836_344_107 (Dolby MAT + Atmos)
+  static let dolbyMATPlusInternalC = fourCC("mtc+")  // 1_836_344_107 (Dolby MAT + Atmos)
 
   // Apple 公式オーディオトラック / CoreAudio 標準定義
-  static let enhancedAC3 = fourCC("ec-3")               // kAudioFormatEnhancedAC3
-  static let enhancedAC3JOC = fourCC("ec+3")            // Enhanced AC-3 with JOC (Dolby Atmos)
-  static let dolbyDigital = fourCC("ac-3")              // kAudioFormatAC3
-  static let dolbyDigital60958 = fourCC("cac3")         // kAudioFormat60958AC3
+  static let enhancedAC3 = fourCC("ec-3")  // kAudioFormatEnhancedAC3
+  static let enhancedAC3JOC = fourCC("ec+3")  // Enhanced AC-3 with JOC (Dolby Atmos)
+  static let dolbyDigital = fourCC("ac-3")  // kAudioFormatAC3
+  static let dolbyDigital60958 = fourCC("cac3")  // kAudioFormat60958AC3
 
   // 一般的な FourCC 定義
   static let dolbyMATStandard = fourCC("mat$")

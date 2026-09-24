@@ -27,7 +27,11 @@
                                       (sdk (string-trim (shell-command-to-string "xcrun --show-sdk-path --sdk macosx"))))
 
                                  (plist-put config 'compile (format "swift build --product %s -Xswiftc -D -Xswiftc DEBUG" target))
-                                 (plist-put config :program (concat cwd ".build/arm64-apple-macosx/debug/" target))
+                                 ;; (plist-put config :program (concat cwd ".build/arm64-apple-macosx/debug/" target))
+                                 ;; 変更後:
+                                 (plist-put config :program (expand-file-name (format ".build/debug/%s" target) cwd))
+
+
                                  (plist-put config :env (list :SDKROOT sdk))
 
                                  ;; clear taget

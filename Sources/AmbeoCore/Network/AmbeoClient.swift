@@ -443,4 +443,3 @@ public actor AmbeoClient {
     Logger.network.info("Activated endpoint [\(path)] successfully.")
   }
 }
-

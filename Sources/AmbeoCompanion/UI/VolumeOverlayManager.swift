@@ -83,7 +83,8 @@ final class VolumeOverlayManager {
   private func updatePanelPosition() {
     guard let panel else { return }
     let mouseLoc = NSEvent.mouseLocation
-    let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) }) ?? NSScreen.main
+    let screen =
+      NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) }) ?? NSScreen.main
     guard let screen else { return }
     let sf = screen.visibleFrame
     let pf = panel.frame

@@ -8,4 +8,3 @@ extension KeyboardShortcuts.Name {
   static let toggleVoiceEnhancement = Self("toggleVoiceEnhancement")
   static let wakeUpSoundbar = Self("wakeUpSoundbar")
 }
-

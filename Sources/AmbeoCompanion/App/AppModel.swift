@@ -16,7 +16,8 @@ struct AppSettings: Codable {
   var autoStandbySeconds: Int = 0
 
   enum CodingKeys: String, CodingKey {
-    case ambeoUid, audioDeviceUid, fallbackAudioFormatID, mediaKeyEnabled, atmosBoostAmount, autoStandbySeconds
+    case ambeoUid, audioDeviceUid, fallbackAudioFormatID, mediaKeyEnabled, atmosBoostAmount,
+      autoStandbySeconds
   }
 
   init() {}
@@ -25,13 +26,13 @@ struct AppSettings: Codable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     ambeoUid = try container.decodeIfPresent(String.self, forKey: .ambeoUid) ?? ""
     audioDeviceUid = try container.decodeIfPresent(String.self, forKey: .audioDeviceUid) ?? ""
-    fallbackAudioFormatID = try container.decodeIfPresent(String.self, forKey: .fallbackAudioFormatID) ?? ""
+    fallbackAudioFormatID =
+      try container.decodeIfPresent(String.self, forKey: .fallbackAudioFormatID) ?? ""
     mediaKeyEnabled = try container.decodeIfPresent(Bool.self, forKey: .mediaKeyEnabled) ?? true
     atmosBoostAmount = try container.decodeIfPresent(Double.self, forKey: .atmosBoostAmount) ?? 0
     autoStandbySeconds = try container.decodeIfPresent(Int.self, forKey: .autoStandbySeconds) ?? 0
   }
 }
-
 
 @Observable
 @MainActor
@@ -81,7 +82,6 @@ final class AppModel: Sendable {
       }
     }
   }
-
 
   private(set) var networkDevices: [SennheiserNetworkDevice] = []
   private(set) var currentAudioDevice: AudioDevice? = nil
@@ -229,7 +229,6 @@ final class AppModel: Sendable {
       self.evaluateAtmosState(soundbarAtmos: initialSoundbarAtmos)
     }
   }
-
 
   // MARK: - Discovery
 
@@ -471,12 +470,12 @@ final class AppModel: Sendable {
         }
       }
 
-
       // If change was triggered externally (remote control, hardware buttons, app),
       // update state and display the OSD on screen for user-facing audio controls!
       if isExternal {
         let currentPreset = await client.state.preset.lowercased()
-        let activeAmbeoLevelPath = "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(currentPreset)"
+        let activeAmbeoLevelPath =
+          "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(currentPreset)"
         let osdEligiblePaths: Set<String> = [
           AmbeoEndpoint.Player.Volume().path,
           AmbeoEndpoint.Player.Mute().path,
@@ -496,7 +495,9 @@ final class AppModel: Sendable {
             await self.syncAndShowOverlay()
           }
         } else {
-          Logger.lifecycle.debug("External change detected on [\(path)]. Suppressing OSD (not eligible).")
+          Logger.lifecycle.debug(
+            "External change detected on [\(path)]. Suppressing OSD (not eligible)."
+          )
         }
       }
     }
@@ -656,7 +657,8 @@ final class AppModel: Sendable {
           let boost = self.appliedAtmosBoost
           let current = await client.state.volume
           let minVol =
-            (await client.getEntry(for: AmbeoEndpoint.Player.Volume()))?.edit.flatMap { $0.min } ?? 0
+            (await client.getEntry(for: AmbeoEndpoint.Player.Volume()))?.edit.flatMap { $0.min }
+            ?? 0
           let newVol = max(minVol, current - boost)
           do {
             try await client.set(
@@ -667,7 +669,9 @@ final class AppModel: Sendable {
             self.isAtmosActive = false
             self.isCoreAudioAtmos = false
             self.isSoundbarAtmos = false
-            Logger.audio.info("Atmos Boost reverted before sleep: \(current) → \(newVol) (-\(boost)%)")
+            Logger.audio.info(
+              "Atmos Boost reverted before sleep: \(current) → \(newVol) (-\(boost)%)"
+            )
           } catch {
             Logger.audio.warning(
               "Failed to revert Atmos Boost before sleep: \(error.localizedDescription). Preserving boost state across wake."
@@ -849,7 +853,9 @@ final class AppModel: Sendable {
       Logger.lifecycle.info("Synced Auto Standby to soundbar: \(target) seconds")
       await syncAndShowOverlay()
     } catch {
-      Logger.lifecycle.error("Failed to sync Auto Standby to soundbar: \(error.localizedDescription)")
+      Logger.lifecycle.error(
+        "Failed to sync Auto Standby to soundbar: \(error.localizedDescription)"
+      )
     }
   }
 
@@ -857,7 +863,6 @@ final class AppModel: Sendable {
     settings.autoStandbySeconds = seconds
     await syncAutoStandbyToSoundbar()
   }
-
 
   func wakeUpSoundbar() async {
     guard let client = ambeoClient else { return }
@@ -873,4 +878,3 @@ final class AppModel: Sendable {
     }
   }
 }
-

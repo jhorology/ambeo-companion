@@ -157,7 +157,6 @@ struct SettingsView: View {
           KeyboardShortcuts.Recorder(for: .toggleAmbeoMode)
         }
 
-
         LabeledDescription(
           title: "AMBEO 3D Level",
           subtitle: "Cycle through Light, Standard, and Boost intensity levels."

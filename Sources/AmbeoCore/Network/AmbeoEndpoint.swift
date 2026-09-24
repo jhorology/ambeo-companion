@@ -106,7 +106,9 @@ public enum AmbeoEndpoint {
       public typealias Edit = NoEdit
       public let path = "settings:/popcorn/audio/voiceEnhancement"
       public init() {}
-      public func apply(_ value: Payload, to state: inout AmbeoState) { state.isVoiceEnhancement = value }
+      public func apply(_ value: Payload, to state: inout AmbeoState) {
+        state.isVoiceEnhancement = value
+      }
     }
 
     public struct EcoMode: AmbeoEndpointProtocol {
@@ -132,7 +134,9 @@ public enum AmbeoEndpoint {
       public typealias Edit = NoEdit
       public let path = "powermanager:target"
       public init() {}
-      public func apply(_ value: Payload, to state: inout AmbeoState) { state.powerTarget = value.target }
+      public func apply(_ value: Payload, to state: inout AmbeoState) {
+        state.powerTarget = value.target
+      }
     }
 
     public struct MaxIdleTime: AmbeoEndpointProtocol {
