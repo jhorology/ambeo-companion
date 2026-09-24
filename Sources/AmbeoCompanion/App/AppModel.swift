@@ -1,5 +1,6 @@
 import AmbeoCore
 import AppKit
+import CoreAudio
 import Foundation
 import KeyboardShortcuts
 import Logging
@@ -44,6 +45,8 @@ final class AppModel: Sendable {
   private var discoveringAmbeoTask: Task<Void, Never>?
   private var monitoringAudioDeviceTask: Task<Void, Never>?
   private var monitoringFormatTask: Task<Void, Never>?
+  /// Device and output stream that `monitoringFormatTask` observes.
+  private var monitoredFormatSource: (device: AudioDeviceID, stream: AudioStreamID)?
   private var monitoringSystemEventTask: Task<Void, Never>?
   private var clientTask: Task<Void, Never>?
   private var clientGeneration = 0
@@ -281,16 +284,32 @@ final class AppModel: Sendable {
     }
 
     guard let device = targetDevice else {
-      monitoringFormatTask?.cancel()
-      monitoringFormatTask = nil
+      stopMonitoringFormat()
       return
     }
 
     startMonitoringFormat(for: device)
   }
 
-  private func startMonitoringFormat(for device: AudioDevice) {
+  private func stopMonitoringFormat() {
     monitoringFormatTask?.cancel()
+    monitoringFormatTask = nil
+    monitoredFormatSource = nil
+  }
+
+  private func startMonitoringFormat(for device: AudioDevice) {
+    // During Atmos passthrough, macOS briefly moves the default output to another device whenever
+    // another app plays a sound. With a target device set, the source is unchanged, so keep the
+    // existing stream instead of tearing it down on every switch.
+    let streamID = AudioDeviceMonitor.shared.outputStreamID(for: device.id)
+    if let source = monitoredFormatSource, let streamID,
+      source.device == device.id, source.stream == streamID, monitoringFormatTask != nil
+    {
+      return
+    }
+
+    monitoringFormatTask?.cancel()
+    monitoredFormatSource = streamID.map { (device: device.id, stream: $0) }
     monitoringFormatTask = Task {
       for await format in AudioDeviceMonitor.shared.formatStream(for: device.id) {
         Logger.audio.debug("Physical format changed: \(String(describing: format?.displayName))")
@@ -677,7 +696,7 @@ final class AppModel: Sendable {
       Task { @MainActor [weak self] in
         guard let self else { return }
         self.monitoringAudioDeviceTask?.cancel()
-        self.monitoringFormatTask?.cancel()
+        self.stopMonitoringFormat()
         self.atmosDeactivationTask?.cancel()
         self.atmosDeactivationTask = nil
         self.discoveringAmbeoTask?.cancel()

@@ -583,3 +583,33 @@ self.updateFormatMonitoringForActiveDevice()   // デフォルトデバイス変
 | 13 | AMBEO の `modifyQueue` でキューを解放する方法（空 subscribe / unsubscribe の意味）を確認できていない。未検証の API 呼び出しは入れない |
 | 15 | グレース期間を延ばすかどうかは、トラック間で実際にどれだけ途切れるかを実機ログで確かめてから決める |
 | 16, 17 | 前回の見送り理由と同じ |
+
+## 検証（2026-09-24 夜）
+
+修正コミット（`6d0dfae`）をレビュー指摘と突合し、修正コード自体の正確性をチェックした。`swift build`（Swift 6.3）は警告ゼロ。
+
+- **#1**: 失敗・キャンセル・再接続の各シナリオを状態機械として追跡。`appliedAtmosBoost > 0` ⟺ サウンドバーがブースト中、という不変条件が全経路（apply 失敗 / revert 失敗 / 起動中の解除 / 解除中の再起動 / スリープ）で保たれることを確認。`enqueueAtmosWork` の直列化 + 実行時 `isAtmosActive` 再チェックで、起動と解除の競合も解消
+- **#4**: 旧コードの use-after-free（termination ハンドラーが `Context` を解放した後にコールバックが走る可能性）も、スレッド側が tap 無効化・`CFMachPortInvalidate` の後に解放する形に変わったことで解消。`onTermination` クロージャが `Context` を strong capture しているため、スレッド終了後の `stop()` 呼び出しも安全
+- **#5**: 対応記録の訂正（`paus`/`f32 ` は `mFormatFlags` の違いで formatID ではない）は正確。`AvailablePhysicalFormats` からの一致 ASBD 採用は、Atmos 直後の `cc+3` 残留に対する根本解決
+- **#6**: `handleAmbeoStatusChange` が `maxIdleTime` を `settings` 更新より先に反映する順序が正しく、外部変更のミラーリングで書き戻しが発生しないことを確認
+
+残りの微細な観察（未対応、ブロックしない）:
+
+1. `setBoostVolume` の失敗ログが apply 失敗時に "Keeping boost state (0%)" となる（実態は「未適用」）。`action` 名で文言を分岐させると明確
+2. 再接続が boost の `set` 送信中に発生すると、旧クライアント経由で届いた変更を新クライアントのエコー抑制が知らず、OSD が 1 回だけ誤表示する窓が理論上残る（極めて稀）
+3. スリープ時の `await atmosTransitionTask?.value` は、サウンドバーが到達不能なら最大 ~10 秒（リクエストタイムアウト）スリープを遅延させる。代替案（スリープ中にブーストを残す）より悪くないので現状で妥当
+
+---
+
+# 障害対応 2026-09-24 — メインスレッドのデッドロック（v0.1.9 build 10）
+
+`swift run` 中に OSD が表示されたまま固まった。`sample` でスタックを取った結果:
+
+- **メインスレッド**: `startMonitoringFormat` → `monitoringFormatTask?.cancel()` → `formatStream` の `onTermination` → `AudioObjectRemovePropertyListener` の中で、実行中のリスナーが終わるのを待っている
+- **HAL リスナースレッド**: `formatStream` のリスナー → `continuation.yield` → 待っているタスクを再開しようとして、そのタスクのステータスロックを待っている
+
+`Task.cancel()` はタスクのステータスロックを持ったまま `onTermination` を同期で呼ぶ。そのため「cancel 側は listener の終了待ち、listener 側はロック待ち」で相互待ちになる。このパターンは v0.1.0 からある潜在バグで、今回の v0.1.8 の修正では触っていない。発生したのは、Atmos 曲の境目でデフォルト出力デバイスの切り替え（`AW3225QF` ↔ `Mac Studio Speakers`）と物理フォーマットの変更が同時に起きたときだった。
+
+**修正**: `AudioDeviceMonitor` の 3 つのストリーム（`defaultDeviceStream` / `outputDevicesStream` / `formatStream`）すべてで、`onTermination` からリスナーの削除と `StreamContext` の解放を専用のシリアルキューへ `async` で逃がすようにした。cancel 側がすぐにロックを手放すので、リスナーの `yield` が完了し、その後で削除が進む。削除は実行中のリスナーを待つので、解放後にコンテキストへ触れることはない。
+
+**発生条件と追加の対応（9/24 レビュー #10 を実施）**: macOS は、Atmos パススルーで再生している最中に他のアプリが音を出すと、デフォルト出力を一時的に別のデバイスへ切り替え、その後で元に戻す。ターゲットデバイスを設定している場合、監視しているデバイスは変わらないのに、切り替えのたびにフォーマット監視を作り直していた。これがデッドロックを起こしやすくしていた。`startMonitoringFormat` は、監視しているデバイス ID と出力ストリーム ID が前回と同じならストリームを作り直さない。ストリーム ID も比べるのは、抜き差しでデバイス ID が同じまま中のストリームが作り直された場合に監視漏れを防ぐため（見送ったときの懸念への対処）。

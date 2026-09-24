@@ -135,6 +135,10 @@ private enum EncodedAudioFormatID {
 
 public final class AudioDeviceMonitor: Sendable {
   public static let shared = AudioDeviceMonitor()
+  /// Serial queue for removing CoreAudio property listeners outside `Task.cancel()`.
+  private static let listenerTeardownQueue = DispatchQueue(
+    label: "AudioDeviceMonitor.listenerTeardown"
+  )
 
   private init() {}
 
@@ -180,14 +184,19 @@ public final class AudioDeviceMonitor: Sendable {
       continuation.yield(currentDefaultDevice)
 
       continuation.onTermination = { @Sendable _ in
-        var addr = address
-        AudioObjectRemovePropertyListener(
-          AudioObjectID(kAudioObjectSystemObject),
-          &addr,
-          listener,
-          safeBridge  // safeBridgeを使用
-        )
-        Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+        // Termination runs inside Task.cancel() while the task's status lock is held.
+        // RemovePropertyListener waits for an in-flight listener, whose yield needs that
+        // same lock, so removing here deadlocks. Remove off the cancelling thread instead.
+        Self.listenerTeardownQueue.async {
+          var addr = address
+          AudioObjectRemovePropertyListener(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr,
+            listener,
+            safeBridge  // safeBridgeを使用
+          )
+          Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+        }
       }
     }
   }
@@ -236,14 +245,19 @@ public final class AudioDeviceMonitor: Sendable {
       continuation.yield(allOutputDevices)
 
       continuation.onTermination = { @Sendable _ in
-        var addr = address
-        AudioObjectRemovePropertyListener(
-          AudioObjectID(kAudioObjectSystemObject),
-          &addr,
-          listener,
-          safeBridge
-        )
-        Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+        // Termination runs inside Task.cancel() while the task's status lock is held.
+        // RemovePropertyListener waits for an in-flight listener, whose yield needs that
+        // same lock, so removing here deadlocks. Remove off the cancelling thread instead.
+        Self.listenerTeardownQueue.async {
+          var addr = address
+          AudioObjectRemovePropertyListener(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr,
+            listener,
+            safeBridge
+          )
+          Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+        }
       }
     }
   }
@@ -346,6 +360,17 @@ public final class AudioDeviceMonitor: Sendable {
     )
   }
 
+  /// The output stream that `formatStream(for:)` observes. It changes when the device is re-created
+  /// (e.g. unplugged and reconnected), even if the device ID stays the same.
+  public func outputStreamID(for id: AudioDeviceID) -> AudioStreamID? {
+    property(
+      for: id,
+      selector: kAudioDevicePropertyStreams,
+      scope: kAudioDevicePropertyScopeOutput,
+      type: AudioStreamID.self
+    ).first
+  }
+
   public func formatStream(for id: AudioDeviceID) -> AsyncStream<AudioPhysicalFormat?> {
     AsyncStream { continuation in
       let streamIds = self.property(
@@ -409,14 +434,19 @@ public final class AudioDeviceMonitor: Sendable {
       continuation.yield(self.currentPhysicalFormat(for: id))
 
       continuation.onTermination = { @Sendable _ in
-        var addr = address
-        AudioObjectRemovePropertyListener(
-          streamId,
-          &addr,
-          listener,
-          safeBridge
-        )
-        Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+        // Termination runs inside Task.cancel() while the task's status lock is held.
+        // RemovePropertyListener waits for an in-flight listener, whose yield needs that
+        // same lock, so removing here deadlocks. Remove off the cancelling thread instead.
+        Self.listenerTeardownQueue.async {
+          var addr = address
+          AudioObjectRemovePropertyListener(
+            streamId,
+            &addr,
+            listener,
+            safeBridge
+          )
+          Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
+        }
       }
     }
   }
