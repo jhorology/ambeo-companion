@@ -35,342 +35,239 @@ let cornerRadius: CGFloat = 185
 
 let squirclePath = NSBezierPath(roundedRect: iconRect, xRadius: cornerRadius, yRadius: cornerRadius)
 
-// 2. Drop Shadow for the Squircle
+// 2. Drop Shadow for the Outer Squircle
 cg.saveGState()
 let shadow = NSShadow()
-shadow.shadowColor = NSColor.black.withAlphaComponent(0.45)
+shadow.shadowColor = NSColor(deviceWhite: 0.0, alpha: 0.42)
 shadow.shadowOffset = NSSize(width: 0, height: -22)
-shadow.shadowBlurRadius = 38
+shadow.shadowBlurRadius = 36
 shadow.set()
 
-// Draw shadow base
-NSColor(deviceWhite: 0.1, alpha: 1.0).setFill()
+NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.15, alpha: 1.0).setFill()
 squirclePath.fill()
 cg.restoreGState()
 
-// 3. Squircle Background & Clip
+// 3. Draw Outer Squircle Body
 cg.saveGState()
 squirclePath.addClip()
 
-// Dark Titanium / Obsidian Gradient
-let bgColors =
+// Dark Slate / Navy Gradient
+let outerColors =
   [
-    NSColor(calibratedRed: 0.13, green: 0.14, blue: 0.18, alpha: 1.0).cgColor,
-    NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.12, alpha: 1.0).cgColor,
-    NSColor(calibratedRed: 0.04, green: 0.04, blue: 0.06, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.18, green: 0.23, blue: 0.29, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.13, green: 0.17, blue: 0.22, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.07, green: 0.09, blue: 0.13, alpha: 1.0).cgColor,
   ] as CFArray
-let bgLocations: [CGFloat] = [0.0, 0.6, 1.0]
-if let bgGradient = CGGradient(
+let outerLocations: [CGFloat] = [0.0, 0.45, 1.0]
+if let outerGrad = CGGradient(
   colorsSpace: CGColorSpaceCreateDeviceRGB(),
-  colors: bgColors,
-  locations: bgLocations
+  colors: outerColors,
+  locations: outerLocations
 ) {
   cg.drawLinearGradient(
-    bgGradient,
+    outerGrad,
     start: CGPoint(x: size / 2, y: size - iconPadding),
     end: CGPoint(x: size / 2, y: iconPadding),
     options: []
   )
 }
 
-// Subtle Radial Ambient Glow behind the waves
-let glowColors =
-  [
-    NSColor(calibratedRed: 0.0, green: 0.8, blue: 1.0, alpha: 0.28).cgColor,
-    NSColor(calibratedRed: 0.7, green: 0.2, blue: 1.0, alpha: 0.16).cgColor,
-    NSColor(calibratedRed: 0.0, green: 0.0, blue: 0.0, alpha: 0.0).cgColor,
-  ] as CFArray
-let glowLocations: [CGFloat] = [0.0, 0.55, 1.0]
-if let glowGrad = CGGradient(
-  colorsSpace: CGColorSpaceCreateDeviceRGB(),
-  colors: glowColors,
-  locations: glowLocations
-) {
-  cg.drawRadialGradient(
-    glowGrad,
-    startCenter: CGPoint(x: size / 2, y: 460),
-    startRadius: 0,
-    endCenter: CGPoint(x: size / 2, y: 460),
-    endRadius: 420,
-    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-  )
-}
+// 4. Inner Silver Plate
+let innerInset: CGFloat = 76
+let innerSize = iconSize - (innerInset * 2)  // 672x672
+let innerRect = NSRect(
+  x: iconPadding + innerInset,
+  y: iconPadding + innerInset,
+  width: innerSize,
+  height: innerSize
+)
+let innerCornerRadius: CGFloat = 140
+let innerPlatePath = NSBezierPath(
+  roundedRect: innerRect,
+  xRadius: innerCornerRadius,
+  yRadius: innerCornerRadius
+)
 
-// 4. Subtle Acoustic Spherical Grid Lines in Background
+// Subtle recessed shadow behind inner plate (top inset shadow)
 cg.saveGState()
-cg.setLineWidth(1.2)
-cg.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.05).cgColor)
-for r: CGFloat in stride(from: 120, through: 420, by: 45) {
-  cg.addArc(
-    center: CGPoint(x: size / 2, y: 320),
-    radius: r,
-    startAngle: 0,
-    endAngle: .pi,
-    clockwise: false
-  )
-  cg.strokePath()
-}
+let innerShadow = NSShadow()
+innerShadow.shadowColor = NSColor(calibratedRed: 0.02, green: 0.04, blue: 0.07, alpha: 0.50)
+innerShadow.shadowOffset = NSSize(width: 0, height: -5)
+innerShadow.shadowBlurRadius = 10
+innerShadow.set()
+NSColor(calibratedRed: 0.9, green: 0.9, blue: 0.9, alpha: 1.0).setFill()
+innerPlatePath.fill()
 cg.restoreGState()
 
-// 5. 3D Spatial Audio Concentric Waves (The AMBEO Sound Experience)
-let waveCenter = CGPoint(x: size / 2, y: 330)
-
-struct WaveDef {
-  let radius: CGFloat
-  let startAngle: CGFloat
-  let endAngle: CGFloat
-  let lineWidth: CGFloat
-  let colorStart: NSColor
-  let colorEnd: NSColor
-  let glowColor: NSColor
-}
-
-let waves: [WaveDef] = [
-  // Outer spatial immersion wave (Electric Blue to Cyan)
-  WaveDef(
-    radius: 320,
-    startAngle: .pi * 0.20,
-    endAngle: .pi * 0.80,
-    lineWidth: 18,
-    colorStart: NSColor(calibratedRed: 0.1, green: 0.6, blue: 1.0, alpha: 0.9),
-    colorEnd: NSColor(calibratedRed: 0.0, green: 0.95, blue: 1.0, alpha: 0.95),
-    glowColor: NSColor(calibratedRed: 0.0, green: 0.8, blue: 1.0, alpha: 0.5)
-  ),
-  // Mid-outer surround wave (Vibrant AMBEO Purple - signature Night Mode & Sennheiser aesthetic)
-  WaveDef(
-    radius: 245,
-    startAngle: .pi * 0.16,
-    endAngle: .pi * 0.84,
-    lineWidth: 22,
-    colorStart: NSColor(calibratedRed: 0.85, green: 0.3, blue: 1.0, alpha: 1.0),
-    colorEnd: NSColor(calibratedRed: 0.6, green: 0.15, blue: 1.0, alpha: 1.0),
-    glowColor: NSColor(calibratedRed: 0.85, green: 0.3, blue: 1.0, alpha: 0.7)
-  ),
-  // Mid wave (Cyan to Magenta transition)
-  WaveDef(
-    radius: 175,
-    startAngle: .pi * 0.12,
-    endAngle: .pi * 0.88,
-    lineWidth: 24,
-    colorStart: NSColor(calibratedRed: 0.0, green: 0.95, blue: 1.0, alpha: 1.0),
-    colorEnd: NSColor(calibratedRed: 0.8, green: 0.25, blue: 1.0, alpha: 1.0),
-    glowColor: NSColor(calibratedRed: 0.0, green: 0.9, blue: 1.0, alpha: 0.8)
-  ),
-  // Inner core wave (Brilliant Neon Cyan - signature AMBEO illuminated LED)
-  WaveDef(
-    radius: 105,
-    startAngle: .pi * 0.08,
-    endAngle: .pi * 0.92,
-    lineWidth: 26,
-    colorStart: NSColor(calibratedRed: 0.2, green: 1.0, blue: 1.0, alpha: 1.0),
-    colorEnd: NSColor(calibratedRed: 0.0, green: 0.8, blue: 1.0, alpha: 1.0),
-    glowColor: NSColor(calibratedRed: 0.0, green: 1.0, blue: 1.0, alpha: 0.9)
-  ),
-]
-
-for wave in waves {
-  cg.saveGState()
-
-  // Outer Bloom / Glow
-  cg.setShadow(
-    offset: CGSize(width: 0, height: 0),
-    blur: 26,
-    color: wave.glowColor.cgColor
-  )
-
-  // Wave path
-  let path = CGMutablePath()
-  path.addArc(
-    center: waveCenter,
-    radius: wave.radius,
-    startAngle: wave.startAngle,
-    endAngle: wave.endAngle,
-    clockwise: false
-  )
-
-  cg.setLineWidth(wave.lineWidth)
-  cg.setLineCap(.round)
-
-  // Stroke wave with gradient
-  let strokedPath = path.copy(
-    strokingWithWidth: wave.lineWidth,
-    lineCap: .round,
-    lineJoin: .round,
-    miterLimit: 10
-  )
-  cg.addPath(strokedPath)
-  cg.clip()
-
-  let wColors = [wave.colorStart.cgColor, wave.colorEnd.cgColor] as CFArray
-  if let wGrad = CGGradient(
-    colorsSpace: CGColorSpaceCreateDeviceRGB(),
-    colors: wColors,
-    locations: [0.0, 1.0]
-  ) {
-    cg.drawLinearGradient(
-      wGrad,
-      start: CGPoint(x: waveCenter.x - wave.radius, y: waveCenter.y),
-      end: CGPoint(x: waveCenter.x + wave.radius, y: waveCenter.y + wave.radius * 0.8),
-      options: []
-    )
-  }
-
-  cg.restoreGState()
-}
-
-// 6. Soundbar Silhouette at Bottom of Motif
-let barWidth: CGFloat = 500
-let barHeight: CGFloat = 58
-let barX = (size - barWidth) / 2
-let barY: CGFloat = 245
-let barRect = NSRect(x: barX, y: barY, width: barWidth, height: barHeight)
-let barCornerRadius: CGFloat = 16
-let barPath = NSBezierPath(roundedRect: barRect, xRadius: barCornerRadius, yRadius: barCornerRadius)
-
-// Soundbar Drop Shadow
+// Draw Inner Plate Surface Gradient
 cg.saveGState()
-let barShadow = NSShadow()
-barShadow.shadowColor = NSColor.black.withAlphaComponent(0.65)
-barShadow.shadowOffset = NSSize(width: 0, height: -10)
-barShadow.shadowBlurRadius = 18
-barShadow.set()
+innerPlatePath.addClip()
 
-// Soundbar Body Gradient
-let barColors =
+let plateColors =
   [
-    NSColor(calibratedRed: 0.25, green: 0.27, blue: 0.33, alpha: 1.0).cgColor,
-    NSColor(calibratedRed: 0.15, green: 0.16, blue: 0.20, alpha: 1.0).cgColor,
-    NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.11, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.98, green: 0.99, blue: 1.0, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.93, green: 0.94, blue: 0.95, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.84, green: 0.86, blue: 0.88, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.76, green: 0.78, blue: 0.81, alpha: 1.0).cgColor,
   ] as CFArray
-if let barGrad = CGGradient(
+let plateLocations: [CGFloat] = [0.0, 0.28, 0.72, 1.0]
+if let plateGrad = CGGradient(
   colorsSpace: CGColorSpaceCreateDeviceRGB(),
-  colors: barColors,
-  locations: [0.0, 0.45, 1.0]
+  colors: plateColors,
+  locations: plateLocations
 ) {
-  cg.saveGState()
-  barPath.addClip()
   cg.drawLinearGradient(
-    barGrad,
-    start: CGPoint(x: size / 2, y: barY + barHeight),
-    end: CGPoint(x: size / 2, y: barY),
+    plateGrad,
+    start: CGPoint(x: size / 2, y: innerRect.maxY),
+    end: CGPoint(x: size / 2, y: innerRect.minY),
     options: []
   )
-
-  // Top specular highlight on soundbar
-  let topHighlight = CGMutablePath()
-  topHighlight.addRect(
-    CGRect(x: barX + 12, y: barY + barHeight - 2.5, width: barWidth - 24, height: 2)
-  )
-  cg.addPath(topHighlight)
-  cg.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.28).cgColor)
-  cg.fillPath()
-
-  // Left and Right Acoustic Speaker Driver Grilles
-  let grilleY = barY + 16
-  let grilleRadius: CGFloat = 13
-  for gx in [barX + 50, barX + 95, barX + barWidth - 95, barX + barWidth - 50] {
-    let circle = CGMutablePath()
-    circle.addArc(
-      center: CGPoint(x: gx, y: grilleY + grilleRadius),
-      radius: grilleRadius,
-      startAngle: 0,
-      endAngle: .pi * 2,
-      clockwise: true
-    )
-    cg.addPath(circle)
-    cg.setFillColor(NSColor(calibratedRed: 0.04, green: 0.04, blue: 0.06, alpha: 0.75).cgColor)
-    cg.fillPath()
-
-    // Subtle driver cone inner ring
-    let innerCircle = CGMutablePath()
-    innerCircle.addArc(
-      center: CGPoint(x: gx, y: grilleY + grilleRadius),
-      radius: grilleRadius * 0.45,
-      startAngle: 0,
-      endAngle: .pi * 2,
-      clockwise: true
-    )
-    cg.addPath(innerCircle)
-    cg.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.12).cgColor)
-    cg.fillPath()
-  }
-
-  cg.restoreGState()
 }
-cg.restoreGState()
 
-// Soundbar Perimeter Stroke
-cg.saveGState()
-cg.setLineWidth(1.5)
-cg.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.18).cgColor)
-barPath.stroke()
-cg.restoreGState()
-
-// 7. Signature Illuminated Center "AMBEO" LED Lightbar
-let ledWidth: CGFloat = 90
-let ledHeight: CGFloat = 7
-let ledX = (size - ledWidth) / 2
-let ledY = barY + (barHeight - ledHeight) / 2
-let ledRect = NSRect(x: ledX, y: ledY, width: ledWidth, height: ledHeight)
-let ledPath = NSBezierPath(roundedRect: ledRect, xRadius: 3.5, yRadius: 3.5)
-
-cg.saveGState()
-cg.setShadow(
-  offset: CGSize.zero,
-  blur: 20,
-  color: NSColor(calibratedRed: 0.0, green: 0.95, blue: 1.0, alpha: 1.0).cgColor
+// Subtle top inset ambient shadow on inner plate
+let topInsetShadow = CGMutablePath()
+topInsetShadow.addRect(
+  CGRect(x: innerRect.minX, y: innerRect.maxY - 12, width: innerSize, height: 12)
 )
-NSColor(calibratedRed: 0.3, green: 1.0, blue: 1.0, alpha: 1.0).setFill()
-ledPath.fill()
-cg.restoreGState()
-
-// 8. Soundbar Elevation Height Beams (Dolby Atmos / 3D Audio upward firing)
 cg.saveGState()
-for (bx, angle) in [(barX + 150, CGFloat.pi * 0.58), (barX + barWidth - 150, CGFloat.pi * 0.42)] {
-  let beamPath = CGMutablePath()
-  let beamLength: CGFloat = 160
-  let endX = bx + cos(angle) * beamLength
-  let endY = (barY + barHeight) + sin(angle) * beamLength
-  beamPath.move(to: CGPoint(x: bx, y: barY + barHeight))
-  beamPath.addLine(to: CGPoint(x: endX, y: endY))
-
-  cg.setLineWidth(3.5)
-  cg.setLineCap(.round)
-  cg.setStrokeColor(NSColor(calibratedRed: 0.0, green: 0.9, blue: 1.0, alpha: 0.55).cgColor)
-  cg.setShadow(
-    offset: .zero,
-    blur: 12,
-    color: NSColor(calibratedRed: 0.0, green: 0.9, blue: 1.0, alpha: 0.6).cgColor
-  )
-  cg.addPath(beamPath)
-  cg.strokePath()
-}
-cg.restoreGState()
-
-// 9. Central Spatial Origin Core (Pulsing Acoustic Orb)
-let orbCenter = CGPoint(x: size / 2, y: 355)
-let orbRadius: CGFloat = 18
-
-cg.saveGState()
-cg.setShadow(
-  offset: .zero,
-  blur: 28,
-  color: NSColor(calibratedRed: 0.0, green: 1.0, blue: 1.0, alpha: 1.0).cgColor
-)
-let orbPath = CGMutablePath()
-orbPath.addArc(
-  center: orbCenter,
-  radius: orbRadius,
-  startAngle: 0,
-  endAngle: .pi * 2,
-  clockwise: true
-)
-cg.addPath(orbPath)
-cg.setFillColor(NSColor(calibratedRed: 0.85, green: 1.0, blue: 1.0, alpha: 1.0).cgColor)
+cg.setFillColor(NSColor(calibratedRed: 0.05, green: 0.08, blue: 0.12, alpha: 0.08).cgColor)
+cg.addPath(topInsetShadow)
 cg.fillPath()
 cg.restoreGState()
 
-// 10. Inner Bevel Highlight along the Top Edge of the Squircle
+// Inner Plate subtle perimeter stroke (rim highlight / bevel)
+cg.saveGState()
+cg.setLineWidth(1.5)
+cg.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.40).cgColor)
+innerPlatePath.stroke()
+cg.restoreGState()
+
+// 5. Sennheiser AMBEO Logo
+// Build the combined symbol path
+let symbolPath = NSBezierPath()
+
+// A. Top Bar
+let barWidth: CGFloat = 596
+let barHeight: CGFloat = 40
+let topBarY: CGFloat = 718
+let topBarRect = NSRect(
+  x: 512 - barWidth / 2,
+  y: topBarY - barHeight / 2,
+  width: barWidth,
+  height: barHeight
+)
+symbolPath.append(
+  NSBezierPath(
+    roundedRect: topBarRect,
+    xRadius: barHeight / 2,
+    yRadius: barHeight / 2
+  )
+)
+
+// B. Bottom Bar
+let bottomBarY: CGFloat = 306
+let bottomBarRect = NSRect(
+  x: 512 - barWidth / 2,
+  y: bottomBarY - barHeight / 2,
+  width: barWidth,
+  height: barHeight
+)
+symbolPath.append(
+  NSBezierPath(
+    roundedRect: bottomBarRect,
+    xRadius: barHeight / 2,
+    yRadius: barHeight / 2
+  )
+)
+
+// C. Center Horizontal Line
+let centerLineWidth: CGFloat = 510
+let centerLineHeight: CGFloat = 38
+let centerLineRect = NSRect(
+  x: 512 - centerLineWidth / 2,
+  y: 512 - centerLineHeight / 2,
+  width: centerLineWidth,
+  height: centerLineHeight
+)
+symbolPath.append(
+  NSBezierPath(
+    roundedRect: centerLineRect,
+    xRadius: centerLineHeight / 2,
+    yRadius: centerLineHeight / 2
+  )
+)
+
+// D. 7 Vertical Bars
+let vBarWidth: CGFloat = 38
+let pitch: CGFloat = 64
+let vBarHeights: [CGFloat] = [124, 196, 144, 296, 260, 196, 124]
+
+for i in 0..<7 {
+  let cx = 512 + CGFloat(i - 3) * pitch
+  let h = vBarHeights[i]
+  let r = NSRect(x: cx - vBarWidth / 2, y: 512 - h / 2, width: vBarWidth, height: h)
+  symbolPath.append(
+    NSBezierPath(
+      roundedRect: r,
+      xRadius: vBarWidth / 2,
+      yRadius: vBarWidth / 2
+    )
+  )
+}
+
+// Symbol subtle bottom highlight (emboss effect)
+cg.saveGState()
+let symHighlight = NSShadow()
+symHighlight.shadowColor = NSColor(calibratedWhite: 1.0, alpha: 0.55)
+symHighlight.shadowOffset = NSSize(width: 0, height: -1.5)
+symHighlight.shadowBlurRadius = 1.0
+symHighlight.set()
+
+NSColor(calibratedWhite: 1.0, alpha: 0.3).setFill()
+symbolPath.fill()
+cg.restoreGState()
+
+// Symbol drop shadow on the silver plate (subtle depth)
+cg.saveGState()
+let symShadow = NSShadow()
+symShadow.shadowColor = NSColor(calibratedRed: 0.08, green: 0.12, blue: 0.18, alpha: 0.25)
+symShadow.shadowOffset = NSSize(width: 0, height: -2.0)
+symShadow.shadowBlurRadius = 3.5
+symShadow.set()
+
+NSColor(calibratedRed: 0.14, green: 0.18, blue: 0.24, alpha: 1.0).setFill()
+symbolPath.fill()
+cg.restoreGState()
+
+// Symbol gradient fill
+cg.saveGState()
+symbolPath.addClip()
+
+let symColors =
+  [
+    NSColor(calibratedRed: 0.20, green: 0.26, blue: 0.32, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.15, green: 0.20, blue: 0.26, alpha: 1.0).cgColor,
+    NSColor(calibratedRed: 0.09, green: 0.12, blue: 0.17, alpha: 1.0).cgColor,
+  ] as CFArray
+let symLocations: [CGFloat] = [0.0, 0.45, 1.0]
+if let symGrad = CGGradient(
+  colorsSpace: CGColorSpaceCreateDeviceRGB(),
+  colors: symColors,
+  locations: symLocations
+) {
+  cg.drawLinearGradient(
+    symGrad,
+    start: CGPoint(x: 512, y: topBarRect.maxY),
+    end: CGPoint(x: 512, y: bottomBarRect.minY),
+    options: []
+  )
+}
+cg.restoreGState()
+
+// End Inner Plate Clip
+cg.restoreGState()
+
+// 6. Bevel highlight along top edge of Outer Squircle
 let highlightPath = CGMutablePath()
 highlightPath.addArc(
   center: CGPoint(x: iconPadding + cornerRadius, y: size - iconPadding - cornerRadius),
@@ -397,14 +294,14 @@ cg.addPath(highlightPath)
 cg.strokePath()
 cg.restoreGState()
 
-// End squircle clip
-cg.restoreGState()
-
-// Outer subtle squircle rim border
+// Outer rim stroke
 cg.saveGState()
 cg.setLineWidth(1.5)
-cg.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.12).cgColor)
+cg.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.10).cgColor)
 squirclePath.stroke()
+cg.restoreGState()
+
+// End Outer Squircle Clip
 cg.restoreGState()
 
 NSGraphicsContext.restoreGraphicsState()
@@ -458,5 +355,15 @@ iconutil.waitUntilExit()
 
 // Clean up temporary iconset directory
 try? fm.removeItem(atPath: iconsetDir)
+
+// Also update AmbeoCompanion.app bundle if present
+let appResPath = "AmbeoCompanion.app/Contents/Resources"
+if fm.fileExists(atPath: appResPath) {
+  try? fm.removeItem(atPath: "\(appResPath)/AppIcon.icns")
+  try? fm.removeItem(atPath: "\(appResPath)/AppIcon_1024.png")
+  try? fm.copyItem(atPath: icnsPath, toPath: "\(appResPath)/AppIcon.icns")
+  try? fm.copyItem(atPath: outputPath, toPath: "\(appResPath)/AppIcon_1024.png")
+  print("✅ Updated \(appResPath)")
+}
 
 print("🎉 Successfully generated \(icnsPath)!")
