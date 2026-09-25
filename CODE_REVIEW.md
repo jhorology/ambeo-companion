@@ -620,3 +620,33 @@ self.updateFormatMonitoringForActiveDevice()   // デフォルトデバイス変
 - **副修正**: ストリーム ID まで比較して既存監視を維持する判断は、#10 見送りの懸念（デバイス ID 同一・ストリーム再作成）を正しく処理。`AppModel` が `@MainActor` のため `monitoredFormatSource` / `monitoringFormatTask` の変更は直列化されレースなし。`SystemEventMonitor`（v0.1.8 対応）と `SennheiserDiscovery`（`NWBrowser.cancel()` は非ブロッキング、コールバックは専用キュー経由）は同種デッドロックに該当せず、CoreAudio 3 箇所の網羅で十分
 - **残る理論的エッジ（実害なし）**: `monitoringFormatTask` が完了済みの状態で同じデバイス ID + 同じストリーム ID が再来すると、`!= nil` 判定で早期 return して監視が止まる窓がある。ただし CoreAudio は再接続時にストリーム ID を再割り当てするため、現実の抜き差しでは `source.stream == streamID` が外れて再購読される
 - `swift build`（Swift 6.3）は警告ゼロ
+
+---
+
+# 障害対応 2026-09-25 — 設定ダイアログを閉じた後、Command + Tab（App Switcher）にアプリアイコンが残留する（v0.1.11 build 12）
+
+### 現象
+メニューバー常駐アプリ（`LSUIElement = true`）であるにもかかわらず、メニューバーから「Settings...」を開き、設定ウィンドウを閉じた後、Command + Tab（App Switcher）のタスク切り替え画面に Ambeo Companion のアイコンが残り続け、タスク切り替えの対象になってしまう。
+
+### 原因調査
+1. **SwiftUI `Window` での `.onDisappear` 未発火**
+   `AmbeoCompanionApp.swift` では、設定ウィンドウを開く際に `NSApp.setActivationPolicy(.regular)` で通常のフォアグラウンドアプリに昇格させ、ビューの `.onDisappear` で `NSApp.setActivationPolicy(.accessory)` に戻す設計となっていた。
+   しかし、macOS SwiftUI の `Window("Settings", id: "settings-window")` シーンは、ユーザーが赤ボタン（クローズボタン）や `Command + W` でウィンドウを閉じた際に、内側のビューの `.onDisappear` が確実に発火しない（ビュー階層の破棄が即座に行われない）という既知の仕様・不具合が存在した。
+   実機プロセスを調査した結果、ウィンドウが 0 個になっているにもかかわらず `activationPolicy` が `0` (`.regular`) のまま保持され、`.accessory` への復帰コードが一切実行されていなかった。
+2. **アクティブ状態の譲渡不足**
+   macOS の Window Server および App Switcher の仕様上、アクティブ（フォアグラウンド）状態のままアプリのポリシーを `.accessory` に変更しても、他アプリへフォーカスを戻さないと App Switcher がアクティブなプロセスとして認識し続けてしまう。
+
+### 修正内容
+1. **`NSWindow.willCloseNotification` の購読**
+   AppKit レベルでウィンドウが閉じられる通知（`NSWindow.willCloseNotification`）を購読し、閉じられるウィンドウが `settings-window`（またはタイトルが "Settings"）であることを判定して、ウィンドウ閉鎖時に確実にクリーンアップ処理を実行するようにした。
+2. **`revertToAccessory()` の実装（`NSApp.hide(nil)` + `setActivationPolicy(.accessory)`）**
+   ウィンドウ終了時に `NSApp.hide(nil)` を呼んで直前にアクティブだった他アプリケーションにフォーカスを戻し、その上で `NSApp.setActivationPolicy(.accessory)` を呼ぶことで、Dock および Command + Tab（App Switcher）から即座にアプリを完全に除外するようにした（`.onDisappear` にもフォールバックとして保持）。
+3. **設定画面再表示の安定化**
+   再度設定画面を開く際、`NSApp.unhide(nil)` を呼んでからウィンドウの表示とアクティベートを行うようにし、非表示状態からの復帰を確実にした。
+
+### 検証
+- 赤ボタン（AXCloseButton）クリックおよび `Command + W` キーショートカットの両方で設定ウィンドウを閉じた際、`willCloseNotification` が即座に発火し、ポリシーが `1` (`.accessory`)、`isActive = false` に遷移することを確認。
+- `NSWorkspace.shared.runningApplications` の `.regular` アプリケーション一覧から `Ambeo Companion` が除外され、Command + Tab に表示されないことを確認。
+- 再度メニューバーから「Settings...」を開いた際、`NSApp.unhide(nil)` と `openWindow` により正常に前面表示され、フォーカスが当たることを確認。
+- `/Applications/AmbeoCompanion.app` にビルド・インストールし、実機環境で正常に動作することを確認。
+

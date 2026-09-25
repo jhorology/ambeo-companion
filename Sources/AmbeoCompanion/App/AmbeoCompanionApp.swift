@@ -10,10 +10,17 @@ struct AmbeoCompanionApp: App {
 
   private func openSettingsWindow() {
     NSApp.setActivationPolicy(.regular)
+    NSApp.unhide(nil)
     openWindow(id: "settings-window")
     DispatchQueue.main.async {
       NSApp.activate(ignoringOtherApps: true)
     }
+  }
+
+  private func revertToAccessory() {
+    NSApp.hide(nil)
+    let success = NSApp.setActivationPolicy(.accessory)
+    Logger.lifecycle.debug("Reverted activation policy to .accessory: \(success)")
   }
 
   var body: some Scene {
@@ -64,7 +71,16 @@ struct AmbeoCompanionApp: App {
       SettingsView()
         .environment(appModel)
         .onDisappear {
-          NSApp.setActivationPolicy(.accessory)
+          revertToAccessory()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) {
+          notif in
+          guard let win = notif.object as? NSWindow,
+            win.identifier?.rawValue == "settings-window" || win.title == "Settings"
+          else {
+            return
+          }
+          revertToAccessory()
         }
     }
     .windowStyle(.hiddenTitleBar)
