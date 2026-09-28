@@ -1,127 +1,117 @@
 # Ambeo Companion
 
-Sennheiser AMBEO Soundbar (Mini / Plus / Max) を macOS 上から快適に操作・連携するためのコンパニオンメニューバーアプリケーションです。
+[English](README.md) | [日本語](README.ja.md)
 
-macOS の eARC / HDMI パススルー環境における音量調整の制約を解消し、キーボードのメディアキー連携、Dolby Atmos 音量自動補正、無音放置時の自動スリープ（Eco Standby）制御・強制覚醒、macOS ネイティブ風の OSD 表示、グローバルショートカット機能などを提供します。
+A macOS menu bar application designed for seamless control and integration with the Sennheiser AMBEO Soundbar Mini (Plus and Max are unverified).
 
----
-
-## 主な機能（機能概略）
-
-- **メディアキー連動・音量同期**:
-  - Apple Magic Keyboard や Mac の音量キー（音量アップ、音量ダウン、消音）をインターセプトし、eARC 経由では操作できない AMBEO サウンドバーの本体音量とリアルタイムに同期します。
-- **macOS ネイティブ風 HUD / OSD (On-Screen Display)**:
-  - 音量変更や各種モード切替時に、macOS 標準のボリュームインジケータに似た HUD を画面上に表示します。
-  - 実機リモコン、本体ボタン、Web UI など外部からの操作もロングポーリングによりリアルタイム検知し、OSD に即座に反映します。
-  - フロント LED 風の AMBEO ロゴ、Night Mode（実機準拠のパープル LED）、Voice Enhancement、Eco モード、オートスタンバイ、電源状態をグラフィカルに表示します。
-  - マルチディスプレイ環境でもアクティブな画面にスムーズに追従し、滑らかなフェードアニメーションを実現しています。
-- **Atmos Boost (Dolby Atmos 自動音量補正)**:
-  - Dolby Atmos（空間オーディオ）とステレオ PCM 音源が混在するプレイリスト再生時、音源切り替えに伴う音量差を自動で解消するため、Atmos 再生時に指定した音量（0〜40%）を自動でブーストします。
-- **Fallback Audio Format 制御**:
-  - Dolby Atmos 非再生時に macOS が 192 kHz にデフォルト化して不要な処理負荷や遅延が生じるのを防ぎ、指定したフォーマット（48 kHz 2ch など）へ自動フォールバックします。
-- **Auto Standby 制御 & 自動同期（無音スリープ問題の根本解消）**:
-  - 公式 Smart Control アプリや Web UI では規制（EU ErP指令等）により隠されている「オートスタンバイ待機時間（Off / 5分 / 10分 / 15分 / 30分）」を設定画面から直接変更可能です。
-  - PC 環境で「音声をしばらく再生しないとサウンドバーが勝手にエコモードに入り、HDMI/eARC 経由で音が出なくなる」問題を「Off (Never)」設定により根本解決します。
-  - アプリ側の設定として永続化されるため、サウンドバー本体の電源オフやファームウェア更新等で実機側の待機時間がリセットされた場合でも、アプリ起動時・再接続時に希望の設定値へ自動で強制同期（上書き適用）します。
-- **Wake Up Soundbar（ワンクリック & ワンキー強制覚醒）**:
-  - サウンドバーがスリープ（Eco Standby）に入って HDMI/eARC オーディオリンクが切断された場合でも、メニューバーの「Wake Up Soundbar」メニュー、または割り当てたグローバルショートカットからワンアクションでサウンドバーを即座に強制覚醒させ、HDMI TV 音声を即復帰させます。
-  - AirPlay への切り替えと HDMI への戻しといった手動のワークアラウンドが不要になります。
-- **グローバルショートカット**:
-  - 自由なキーバインドを登録し、いつでも以下の機能をワンキーで操作可能です：
-    - Wake Up Soundbar (スタンバイからの即時強制覚醒・HDMI復帰)
-    - AMBEO 3D Mode 切替 (On / Off)
-    - AMBEO 3D Level 切替 (Light / Standard / Boost)
-    - 音声プリセット切替 (Adaptive, Music, Movie, News, Neutral, Sports)
-    - Night Mode 切替 (On / Off)
-    - Voice Enhancement 切替 (On / Off)
-
-
-- **ログイン時自動起動 (Launch at Login)**:
-  - macOS 13+ の `ServiceManagement` (`SMAppService.mainApp`) に完全準拠し、設定画面からワンクリックで Mac 起動時のバックグラウンド常駐を有効化できます。
-- **mDNS デバイス自動検出**:
-  - ローカルネットワーク上の AMBEO サウンドバーを自動検出し、IP アドレスの指定なしですぐに接続可能です。
+It resolves volume adjustment limitations in macOS eARC / HDMI passthrough setups, providing keyboard media key integration, automatic Dolby Atmos volume compensation, auto-standby (Eco Standby) control and force wake-up during idle silence, on-screen display (OSD), and global shortcut support.
 
 ---
 
-## 動作要件
+## Features
 
-- **OS**: macOS 14.0 (Sonoma) 以降
+- **Media Key Integration & Volume Sync**:
+  - Intercepts volume keys (Volume Up, Volume Down, Mute) from Apple Magic Keyboards and Mac keyboards, synchronizing them in real time with the AMBEO Soundbar's hardware volume—which cannot typically be controlled via eARC from macOS.
+- **macOS-Native HUD / OSD (On-Screen Display)**:
+  - Displays a clean HUD resembling the native macOS volume indicator whenever volume or sound modes are changed.
+  - Detects external adjustments made via the physical remote, hardware buttons, or Web UI in real time using long polling, immediately reflecting them on the OSD.
+  - Graphically displays front-LED-style AMBEO logo, Night Mode (purple LED matching the physical unit), Voice Enhancement, Eco Mode, Auto Standby, and power status.
+  - Smoothly tracks the active screen in multi-monitor setups with fluid fade animations.
+- **Atmos Boost (Automatic Dolby Atmos Volume Compensation)**:
+  - Automatically boosts playback volume by a configurable amount (0–40%) during Dolby Atmos playback, eliminating noticeable volume drops when switching between Dolby Atmos (Spatial Audio) and stereo PCM tracks in mixed playlists.
+- **Fallback Audio Format Control**:
+  - Automatically falls back to a designated format (e.g., 48 kHz 2ch) when Dolby Atmos is not playing, preventing macOS from defaulting to 192 kHz and causing unnecessary processing overhead or latency.
+- **Auto Standby Control & Automatic Sync (Fixes Idle Sleep Issues)**:
+  - Allows direct configuration of the auto-standby timeout (Off / 5 min / 10 min / 15 min / 30 min) from the settings window, an option hidden in the official Smart Control app and Web UI due to regulations (such as EU ErP directives).
+  - Fundamentally solves the PC issue where the soundbar enters Eco Standby after a period of silence and stops outputting audio over HDMI/eARC, by setting it to "Off (Never)".
+  - Persisted in the app settings; even if the soundbar's standby timeout is reset after powering off or a firmware update, the app automatically enforces and synchronizes your desired setting on launch and reconnection.
+- **Wake Up Soundbar (One-Click & One-Key Force Wake)**:
+  - Instantly wakes the soundbar and restores HDMI TV audio with a single action—via the menu bar "Wake Up Soundbar" item or an assigned global shortcut—even if the soundbar has entered Eco Standby and severed the HDMI/eARC audio link.
+  - Eliminates the need for manual workarounds such as toggling between AirPlay and HDMI.
+- **Global Shortcuts**:
+  - Assign customizable hotkeys to control key functions at any time:
+    - Wake Up Soundbar (Instantly wake from standby and restore HDMI)
+    - Toggle AMBEO 3D Mode (On / Off)
+    - Cycle AMBEO 3D Level (Light / Standard / Boost)
+    - Switch Sound Presets (Adaptive, Music, Movie, News, Neutral, Sports)
+    - Toggle Night Mode (On / Off)
+    - Toggle Voice Enhancement (On / Off)
+- **Launch at Login**:
+  - Fully compliant with macOS 13+ `ServiceManagement` (`SMAppService.mainApp`). Easily enable background launch at Mac startup with a single click in Settings.
+- **mDNS Device Auto-Discovery**:
+  - Automatically discovers AMBEO Soundbars on the local network, allowing instant connection without manually specifying an IP address.
+
+---
+
+## Requirements
+
+- **OS**: macOS 14.0 (Sonoma) or later
 - **Swift / Xcode**: Swift 6.0+ / Xcode 16+
-- **対象機器**: Sennheiser AMBEO Soundbar Mini / Plus / Max
+- **Supported Devices**: Sennheiser AMBEO Soundbar Mini / Plus / Max (Plus and Max are unverified)
 
 ---
 
-## ビルド & パッケージング手順
+## Build & Packaging
 
-### 1. 開発ビルド (Debug)
-SPM (Swift Package Manager) を使用してビルドします。
+### 1. Debug Build
+Build using SPM (Swift Package Manager):
 
 ```bash
 swift build
 ```
 
-### 2. リリースバイナリのビルド
+### 2. Release Build
 ```bash
 swift build -c release --product AmbeoCompanion
 ```
 
-### 3. macOS アプリバンドル (`AmbeoCompanion.app`) のパッケージング
-付属のパッケージスクリプトを実行することで、Release ビルドのコンパイル、リソース同梱、アドホックコード署名までを自動で行います。
+### 3. Package macOS App Bundle (`AmbeoCompanion.app`)
+Run the included packaging script to compile the release build, bundle resources, and apply ad-hoc code signing automatically:
 
 ```bash
 swift Scripts/PackageApp.swift
 ```
 
-スクリプトが実行する処理内容：
-1. `swift build -c release --product AmbeoCompanion` で最適化バイナリをビルド
-2. `AmbeoCompanion.app` の標準バンドル構造 (`Contents/MacOS`, `Contents/Resources`) を生成
-3. 実行ファイル、`Info.plist`、アプリアイコン (`AppIcon.icns`)、依存パッケージリソース (`KeyboardShortcuts_KeyboardShortcuts.bundle`) を配置
-4. `codesign --deep --force --options runtime --sign - AmbeoCompanion.app` によるアドホックコード署名
+What the script does:
+1. Builds an optimized binary via `swift build -c release --product AmbeoCompanion`
+2. Creates the standard `AmbeoCompanion.app` bundle structure (`Contents/MacOS`, `Contents/Resources`)
+3. Copies the executable, `Info.plist`, app icon (`AppIcon.icns`), and dependency package resources (`KeyboardShortcuts_KeyboardShortcuts.bundle`)
+4. Applies ad-hoc code signing with `codesign --deep --force --options runtime --sign - AmbeoCompanion.app`
 
-### 4. アプリの起動
-生成されたアプリバンドルは以下で直接起動できます：
+### 4. Launching the App
+The generated app bundle can be launched directly:
 
 ```bash
 open AmbeoCompanion.app
 ```
 
-### 5. `/Applications` へのインストール
-ビルド、署名、`/Applications/AmbeoCompanion.app` へのコピー、そして再署名で無効になる権限の再登録は次のスクリプトが行います。
+### 5. Install to `/Applications`
+The following script handles building, signing, copying to `/Applications/AmbeoCompanion.app`, and resetting privacy permissions that are invalidated by re-signing:
 
 ```bash
 Scripts/install.sh
 ```
 
-メディアキーの取得は **アクセシビリティ**（イベントを消費する event tap）と **入力監視**（キーの観測）の両方が必要です。スクリプトは両方の TCC 登録をリセットし、システム設定を順番に開きます。スイッチをオンにする操作自体は macOS がスクリプトに許可しないため、表示された画面でオンにし直してください。
+Capturing media keys requires both **Accessibility** (active event tap to intercept and consume events) and **Input Monitoring** (observing keys). The script resets both TCC registrations and opens the respective System Settings panes. Because macOS does not permit scripts to toggle these switches automatically, please enable them manually in the displayed settings windows.
 
 ---
 
-## 必要な権限とセキュリティ設定
+## Required Permissions & Security Settings
 
-### 1. アクセシビリティと入力監視（メディアキー連動に必須）
-Magic Keyboard や Mac の音量キーを `CGEventTap` で受け取り、イベントを消費して AMBEO サウンドバーへ転送します。これには次の両方が必要です。
+Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed, and forwarded to the AMBEO Soundbar. This requires both of the following permissions:
 
-- **システム設定 > プライバシーとセキュリティ > アクセシビリティ**
-- **システム設定 > プライバシーとセキュリティ > 入力監視**
+- **System Settings > Privacy & Security > Accessibility**
+- **System Settings > Privacy & Security > Input Monitoring**
 
-リストに無い場合は「+」から `/Applications/AmbeoCompanion.app` を追加し、スイッチをオンにします。
+If `AmbeoCompanion.app` is not listed, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on.
 
-再ビルドのたびにアドホック署名のチェックサムが変わるため、画面上はオンのままでも権限が無効になります。`Scripts/install.sh` が両方の登録をリセットし、設定画面を順に開きます。メディアキーが効かないときは、そのスクリプトを実行するか、各画面で一度オフにしてからオンにし直してください。
-
-### 2. Gatekeeper（開発元未確認の警告が出る場合）
-GitHub Releases 等からダウンロードした `.app` を起動する際、「開発元を検証できないため開けません」等の警告が出る場合があります。
-
-- **対処法 1**: Finder で `AmbeoCompanion.app` を **右クリック ＞「開く」** を選択し、ダイアログで「開く」をクリックします。
-- **対処法 2**: ターミナルで隔離属性（Quarantine）を解除します：
-  ```bash
-  xattr -cr /Applications/AmbeoCompanion.app
-  ```
+Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset both registrations and open the settings panes in sequence. If media keys do not work, run the script or toggle the switches off and back on in each pane.
 
 ---
 
-## アイコンの再生成 (任意)
+## Regenerate App Icon (Optional)
 
-アプリアイコンを変更・再生成する場合は、ベクター描画スクリプトを実行すると 1024x1024 PNG から multi-resolution な `.icns` が自動生成されます。
+To modify or regenerate the app icon, run the vector generation script to automatically produce a multi-resolution `.icns` file from a 1024x1024 PNG:
 
 ```bash
 swift Scripts/GenerateAppIcon.swift
@@ -129,6 +119,6 @@ swift Scripts/GenerateAppIcon.swift
 
 ---
 
-## ライセンス
+## License
 
 [MIT License](LICENSE)
