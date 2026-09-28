@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build AmbeoCompanion, install it to /Applications, and re-register the two
 # privacy grants that an ad-hoc signature invalidates:
-#   - Accessibility (アクセシビリティ) — active CGEvent tap that consumes media keys
-#   - ListenEvent  (入力監視)         — observing those keys
+#   - Accessibility — active CGEvent tap that consumes media keys
+#   - ListenEvent   — observing those keys
 #
 # macOS does not allow a script to turn the switches on. This resets the stale
 # TCC entries and opens each pane so they can be enabled again.
@@ -25,13 +25,13 @@ open_privacy_pane() {
 wait_for_toggle() {
   local title="$1"
   echo
-  echo "システム設定の「${title}」を開きました。"
-  echo "  Ambeo Companion をオンにしてください。"
-  echo "  リストに無い場合は + から ${DEST} を追加してください。"
+  echo "Opened \"${title}\" in System Settings."
+  echo "  Please enable Ambeo Companion."
+  echo "  If not in the list, click + to add ${DEST}."
   if [[ -t 0 ]]; then
-    read -r -p "終わったら Enter を押してください: "
+    read -r -p "Press Enter when done: "
   else
-    echo "標準入力がターミナルではないため、スイッチの操作を待たずに続行します。"
+    echo "Standard input is not a terminal; continuing without waiting for toggle."
   fi
 }
 
@@ -61,8 +61,8 @@ BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${DEST}/Con
 
 echo "==> [3/4] Reset privacy grants for ${BUNDLE_ID}"
 # Clear the previous cdhash. A switch that still looks on is not valid after re-signing.
-tccutil reset Accessibility "$BUNDLE_ID" || echo "警告: アクセシビリティのリセットに失敗しました。"
-tccutil reset ListenEvent "$BUNDLE_ID" || echo "警告: 入力監視のリセットに失敗しました。"
+tccutil reset Accessibility "$BUNDLE_ID" || echo "Warning: Failed to reset Accessibility permissions."
+tccutil reset ListenEvent "$BUNDLE_ID" || echo "Warning: Failed to reset Input Monitoring permissions."
 
 # One launch makes the new binary show up in both lists, then quit before the toggles.
 open "$DEST"
@@ -73,11 +73,11 @@ fi
 
 echo "==> [4/4] Re-enable the two privacy panes"
 open_privacy_pane "Privacy_Accessibility"
-wait_for_toggle "プライバシーとセキュリティ > アクセシビリティ"
+wait_for_toggle "Privacy & Security > Accessibility"
 open_privacy_pane "Privacy_ListenEvent"
-wait_for_toggle "プライバシーとセキュリティ > 入力監視"
+wait_for_toggle "Privacy & Security > Input Monitoring"
 
 open "$DEST"
 echo
-echo "インストールしました: ${DEST}"
-echo "権限を変えたあとにアプリを起動し直しています。"
+echo "Installed: ${DEST}"
+echo "Relaunching app after permission changes."
