@@ -6,7 +6,7 @@ extension Notification.Name {
 }
 
 public actor AmbeoClient {
-  private let host: String
+  public let host: String
   private let session: URLSession
   private let decoder = JSONDecoder()
 

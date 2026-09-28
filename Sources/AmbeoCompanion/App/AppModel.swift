@@ -49,6 +49,8 @@ final class AppModel: Sendable {
   private var monitoredFormatSource: (device: AudioDeviceID, stream: AudioStreamID)?
   private var monitoringSystemEventTask: Task<Void, Never>?
   private var clientTask: Task<Void, Never>?
+  /// Debounced reconnect after the selected device's IP changed (see `debouncedReconnectIfIPChanged`).
+  private var ipChangeTask: Task<Void, Never>?
   private var clientGeneration = 0
 
   private var isCoreAudioAtmos: Bool = false
@@ -243,14 +245,37 @@ final class AppModel: Sendable {
       for await devices in SennheiserDiscovery.browse() {
         self.networkDevices = devices
         Logger.network.debug("Discovered devices updated: \(devices.count) devices")
-        // Reconnect if selected device just appeared on the network
-        if self.ambeoClient == nil,
-          !self.settings.ambeoUid.isEmpty,
-          devices.contains(where: { $0.uuid == self.settings.ambeoUid })
-        {
+        guard !self.settings.ambeoUid.isEmpty,
+          let device = devices.first(where: { $0.uuid == self.settings.ambeoUid })
+        else { return }
+        let currentHost = await self.ambeoClient?.host
+        if self.ambeoClient == nil {
+          // Selected device just appeared on the network
           self.reconnectAmbeoClient()
+        } else if let currentHost, currentHost != device.ip {
+          // The client is bound to the IP it was created with (e.g. a stale one from before
+          // sleep). If the device moved (DHCP renewal, router reboot, network switch), the
+          // current connection is dead even though the client itself is alive.
+          self.debouncedReconnectIfIPChanged()
         }
       }
+    }
+  }
+
+  /// Reconnects if the selected device's IP still differs from the client's host after a short
+  /// grace period. Re-verifying against the latest discovery data before reconnecting avoids
+  /// thrashing when mDNS briefly reports a transient address that then reverts.
+  private func debouncedReconnectIfIPChanged() {
+    ipChangeTask?.cancel()
+    ipChangeTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(3))
+      guard !Task.isCancelled, let self else { return }
+      guard let device = self.networkDevices.first(where: { $0.uuid == self.settings.ambeoUid }),
+        let host = await self.ambeoClient?.host,
+        host != device.ip
+      else { return }
+      Logger.network.info("Soundbar IP changed (\(host) -> \(device.ip)). Reconnecting.")
+      self.reconnectAmbeoClient()
     }
   }
 
@@ -700,6 +725,7 @@ final class AppModel: Sendable {
         self.atmosDeactivationTask?.cancel()
         self.atmosDeactivationTask = nil
         self.discoveringAmbeoTask?.cancel()
+        self.ipChangeTask?.cancel()
         self.monitoringSystemEventTask?.cancel()
         self.clientTask?.cancel()
         // Let an in-flight apply/revert finish so appliedAtmosBoost matches the soundbar.

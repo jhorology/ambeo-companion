@@ -650,3 +650,132 @@ self.updateFormatMonitoringForActiveDevice()   // デフォルトデバイス変
 - 再度メニューバーから「Settings...」を開いた際、`NSApp.unhide(nil)` と `openWindow` により正常に前面表示され、フォーカスが当たることを確認。
 - `/Applications/AmbeoCompanion.app` にビルド・インストールし、実機環境で正常に動作することを確認。
 
+
+---
+
+# レビュー 2026-09-28
+
+> スコープ: 全ソースファイル（v0.1.11, HEAD `5517940`）。`swift build`（Swift 6.3）は警告ゼロで成功。
+> 前回までの指摘（9/22 の 17 項目 / 9/24 の 17 項目 / 9/24・9/25 の障害対応 2 件）はコードと突合し、**すべて正しく反映されている**ことを確認した（世代番号による再接続競合防止、`setBoostVolume` 成功時のみ `appliedAtmosBoost` 更新、イベントタップ無効化の検出・再有効化、`NSLock` 保護、CoreAudio リスナーの teardown をシリアルキューへ逃すデッドロック修正、`willCloseNotification` での App Switcher 残留解消 等）。以下は**今回新たに発見した問題**。
+
+## 全体評価
+
+前回の修正が着実に反映され、コード品質はさらに上がっている。Atmos Boost の直列キュー化、エコー抑制の型付きトークン、FourCC 文字列表現などは良い設計。
+
+今回の主な発見は、**「サウンドバーの IP が変わると、アプリが永遠に旧 IP をポーリングし続けて復帰できない」問題**（高優先度 1 件）。これを実環境（ルーター再起動・スリープ中の DHCP 更新）で踏むと「アプリが動かなくなったので再起動した」という形になる。その他は堅牢性・保守性の観点。
+
+---
+
+## 🔴 高優先度（実バグ）
+
+### 1. サウンドバーの IP が変化すると、アプリは永遠に旧 IP をポーリングし続け復帰できない
+
+**再現シナリオ**（実環境で高確率）:
+1. Mac がスリープ中（または稼働中）にサウンドバーの IP が変わる（DHCP リース更新、ルーター再起動、ネットワーク変更）
+2. 復帰時に `didWakeNotification` → `reconnectAmbeoClient()` が**即座に**呼ばれる。このとき IP は `networkDevices` から引かれるが、これは**スリープ前の（古い）リスト**（AppModel.swift:184）。新しい `NWBrowser` の最初の yield は非同期で、まだ届いていない
+3. 決定的なのは、`self.ambeoClient = client` が**接続が確立する前**に代入される点（AppModel.swift:197 付近、`AmbeoClient(host: 旧IP)` 生成直後）
+4. `startDiscoveringAmbeo()` の再接続条件は `self.ambeoClient == nil`（AppModel.swift:247, 687）。新しい IP のリストが discovery から届いても、`ambeoClient` は既に nil でないので**再接続されない**
+5. 結果: クライアントは旧 IP をポーリングし続け、失敗 → 60 秒バックオフ → 死んだ IP を永遠にリトライ。メニューバーは「接続済み」（各操作イネーブル）に見えるが、**実際には全操作が失敗する**。回避策はアプリ再起動、または設定でデバイスを再選択するのみ
+
+**根本原因**: `ambeoClient != nil` を「接続済み」の代理指標にしているが、代入は接続検証前。かつ discovery 結果の IP と現クライアントの `host` を比較するロジックがどこにも存在しない（grep 済み）。`AmbeoClient.host` は `private`（AmbeoClient.swift:9）で外部から比較できない。
+
+**修正案**（最小・直接対処）: `AmbeoClient.host` を `public private(set)` にし、discovery ハンドラを「選択デバイスの IP が現クライアントの host と異なるなら再接続」にする:
+```swift
+for await devices in SennheiserDiscovery.browse() {
+  self.networkDevices = devices
+  if let device = devices.first(where: { $0.uuid == self.settings.ambeoUid }) {
+    if self.ambeoClient == nil || self.ambeoClient?.host != device.ip {
+      self.reconnectAmbeoClient()
+    }
+  }
+}
+```
+`reconnectAmbeoClient` は `appliedAtmosBoost` を引き継いで二重ブーストを防止済みなので、そのまま流用可能。IP が頻繁に揺れる環境が心配なら、再接続に短いデバウンスを入れると安全。
+
+**代替・補強案**: `ambeoClient` の代入を `setupAmbeoSubscription` が成功した後に遅延させ、「`ambeoClient != nil` = 接続検証済み」にする。UI 側では接続確定まで「未接続」と表示されるが、むしろ正直で良い。
+
+---
+
+## 🟡 中優先度（設計 / 堅牢性）
+
+### 2. `AppModel.init()` が重い副作用を持ち、`@State` の初期値として生成されている
+
+`init()` は NWBrowser 起動、CoreAudio モニタ起動、CGEventTap 作成、NotificationCenter 観察者登録、グローバルホットキー登録と、**長時間生きるリソースを全部立ち上げる**。これが `@State private var appModel = AppModel()` の初期値として作られる（AmbeoCompanionApp.swift:6）。
+
+現状 `App` 構造体は 1 回しか生成されないため問題は出ていないが、SwiftUI が `App` を再初期化する状況（再起動・シーン構成変更・将来のリファクタ）が起きると、複数の `AppModel` が生成され、破棄された実体のイベントタップ / 観察者 / ホットキーが**クリーンアップされずに残る** → メディアキーの二重処理、ログの二重出力、などにつながる。副作用を `init` に集中させる設計自体が脆い。
+
+**修正案**: `AppModel` を共有シングルトンにする、または起動処理（`startDiscoveringAmbeo` 等）を `init` から出してルートビューの `.task {}`（1 回だけ実行）へ移す。
+
+### 3. `AppModel` が 967 行（9/24 #9 の継続）
+
+前回見送りのまま、さらに肥大化。Atmos Boost 状態機械（検出 → グレース期間 → トランジション直列キュー → boost 量管理 → スリープ時リバート、約 200 行）は既に独立した形になっており、`AtmosBoostController` への抽出が最も効果的。#1 の修正（IP 変化時の再接続）とセットで、接続ライフサイクルの所有を整理できる。
+
+### 4. discovery 結果が揺れるときの再接続スラッシング
+
+再接続ウィンドウ中（`ambeoClient` を同期で nil にし、新クライアントは非同期で代入）に discovery イベントが来ると、`ambeoClient == nil` 判定で `reconnectAmbeoClient` が再発火し、進行中の再接続をキャンセルする。不安定なネットワークでデバイスリストが頻繁に増減すると、接続が確定しないまま往復する理論的窓がある。#1 を IP 比較ベースにするとこの条件も「IP が実際に変わったか」に絞られ、窓は自然に狭まる。
+
+---
+
+## 🟢 低優先度（軽微 / 防御的）
+
+### 5. `property<T>` が `buffer.baseAddress!` を強制アンラップ
+
+`AudioDeviceMonitor.property<T>`（AudioDeviceMonitor.swift 末尾）は `size > 0` でガードしているが、`0 < size < MemoryLayout<T>.size` のとき `count == 0` となり `buffer.baseAddress` は `nil` → 強制アンラップでクラッシュする。対象プロパティではほぼ起きないが、`count > 0` を明示ガードすると堅い。
+
+### 6. セッション内の stale エコートークン
+
+`expectedEchoValues` は再サブスクライブ時（`setupAmbeoSubscription` 成功）にのみクリアされる（9/24 #7 対応済み）。セッション**内**でエコーのポーリングを 1 回でも落とすと（ポーリングのつまずき）、トークンが残り、その後ユーザーがリモコンで**同じ値**に変更しても「エコー」と誤判定されて OSD が抑制される。TTL 付き管理、またはポーリング再確立時にクリア、などで閉められる。
+
+### 7. `markInitialSyncCompleted` が最初の poll 応答処理前に呼ばれる
+
+`startObserving()` はポーリングタスクを spawn して即 return し、直後に `markInitialSyncCompleted()` が走る（AppModel.swift:215-216）。最初の `pollQueue` 応答はそれより後に処理される。現状はデバイスが新キュー購読時に状態スナップショットを push しないため（9/24 の実機ログで確認済み）問題になっていないが、ファームウェア変更でその挙動が変わると**再接続のたびに全 path で OSD が暴走**する。防御的に「最初の poll 応答処理後に mark する」方が安全。
+
+### 8. その他（軽微）
+
+| 箇所 | 内容 |
+|---|---|
+| `AmbeoModels.swift:74` | `AmbeoUpdateEvent` が死コード（定義のみ、使用なし）。削除または利用 |
+| `AppModel.swift:132,138` | `#available(macOS 13.0, *)` は platform が macOS 14 なので常に真。不要 |
+| `SettingsView.swift:196` | バージョンフォールバック `"0.1.11"` がハードコード。次回リリースで陳腐化。`CFBundleVersion` 参照に |
+| `AmbeoCompanionApp.swift:7` | `didOfferDeviceSetup` がメモリのみ。初回にデバイス未選択で閉じると、以降の起動のたびに設定ウィンドウが再提示される。永続化を検討 |
+| `Package.swift` | Experiment ターゲットがリリースビルドに含まれる（前回見送りの継続） |
+| `AmbeoClient` | `stateCache` / `latestValues` が `Any` 型（前回見送りの継続）。型不一致はログされるので現状許容 |
+
+---
+
+## 推奨アクション（優先度順）
+
+| # | 内容 | 工数 |
+|---|---|---|
+| 1 | **IP 変化時の再接続**（`host` を公開 + discovery ハンドラで IP 比較） | 小 |
+| 2 | `AppModel` 起動処理の `init` 外し / シングルトン化 | 小〜中 |
+| 3 | `AtmosBoostController` への抽出（#1 とセットで接続ライフサイクル整理） | 中 |
+| 4 | 再接続スラッシングのガード（#1 実施で自然に狭まる） | 小 |
+| 5–8 | 軽微修正のバッチ処理 | 極小 |
+
+**#1 が最優先**。「ルーター再起動 / スリープ復帰後にアプリが死んでいて、再起動で直った」は、ユーザーが明確に認識する故障であり、かつ原因が特定済み・修正も小さい。次リリースで対応することを強く推奨する。#2・#3 は「今は動いていても将来壊れる」設計の脆さなので、機能追加の合間に片づけておくと安心。
+
+---
+
+# 対応記録 2026-09-28 — v0.1.12 (build 13)
+
+9/28 レビュー #1（IP 変化時の復帰不能）を修正した。`swift build`（Swift 6.3）は警告ゼロで成功。実機での IP 変化シナリオ（ルーター再起動等）での動作確認は未実施。
+
+## 反映
+
+| # | 内容 |
+|---|---|
+| 1 | `AmbeoClient.host` を `public let` に公開（`let` には `private(set)` が使えないため公開読み取りのみ）。discovery ハンドラを「選択デバイスが出現した（`ambeoClient == nil`）**または** 現クライアントの `host` と discovery 結果の IP が異なる」のどちらでも再接続する形に変更。IP 変化の再接続は `debouncedReconnectIfIPChanged()` 経由で 3 秒デバウンスし、発火時に最新の `networkDevices` で再検証してから `reconnectAmbeoClient()` を呼ぶ。IP が元の値に戻っていた場合は何もしないため、mDNS の一時的な揺らぎによるスラッシング（#4）も同時に抑制される。スリープ突入時に `ipChangeTask` をキャンセルし、復帰後に新しい discovery サイクルで再スケジュールされる。再接続は既存の `reconnectAmbeoClient` を流用するため、`appliedAtmosBoost` の引き継ぎ（二重ブースト防止）と世代番号による競合防止はそのまま効く |
+
+## 検証（コードトレース）
+
+- **IP 不変**: discovery 毎に `host == device.ip` で早期 return。不要な再接続は発生しない
+- **IP 変化（稼働中）**: discovery 更新 → 3 秒デバウンス → 最新リストで再検証 → 相違が持続している場合のみ再接続。回復遅延は「検出 + 3 秒」
+- **スリープ復帰（stale IP）**: 復帰直後の再接続は stale IP のクライアントを作るが、新しい `NWBrowser` の最初の yield（新 IP）でミスマッチが検出され、デバウンス後に新 IP で再接続される。`ambeoClient != nil` による復帰不能は解消
+- **mDNS 揺らぎ**: 3 秒以内に元の IP が戻れば再検証で `host == device.ip` となり再接続しない
+- **デバイス消失**: guard で早期 return。クライアントはバックオフポーリングを継続し、同一 IP で復帰すればポーリングループが自己回復、IP 変化なら上記の経路で再接続
+- **並行性**: discovery ループ・`debouncedReconnectIfIPChanged`・デバウンス Task すべて MainActor 上で直列化。`host` の読み取りのみ actor hop。`[weak self]` + キャンセル確認で破棄後の実行はない
+
+## 見送り
+
+- #2（`AppModel.init()` の副作用）、#3（`AtmosBoostController` 抽出）、#4（スラッシング）、#5–#8（軽微）は未対応。#4 は今回のデバウンス + 再検証で実害が大幅に減っている
