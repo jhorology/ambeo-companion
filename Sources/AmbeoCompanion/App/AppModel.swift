@@ -93,6 +93,9 @@ final class AppModel: Sendable {
   private(set) var networkDevices: [SennheiserNetworkDevice] = []
   private(set) var currentAudioDevice: AudioDevice? = nil
   private(set) var ambeoClient: AmbeoClient? = nil
+  /// Snapshot of the soundbar state for SwiftUI observers such as the menu bar. `nil` until the
+  /// client finishes its initial sync.
+  private(set) var soundbarState: AmbeoState? = nil
   private(set) var maxIdleTime: Int = 0
 
   private var lastAudioPreset: String? = nil
@@ -174,6 +177,7 @@ final class AppModel: Sendable {
 
     let previousClient = ambeoClient
     ambeoClient = nil
+    soundbarState = nil
 
     // Preserve boost state across reconnections to prevent double-boosting.
     // If a boost was already applied to the soundbar hardware, resetting appliedAtmosBoost to 0
@@ -222,9 +226,11 @@ final class AppModel: Sendable {
         return
       }
 
-      let initialSoundbarAtmos = await client.state.audioFormat?.isAtmos == true
-      let initialMaxIdleTime = await client.state.maxIdleTime
+      let initialState = await client.state
+      let initialSoundbarAtmos = initialState.audioFormat?.isAtmos == true
+      let initialMaxIdleTime = initialState.maxIdleTime
       guard generation == self.clientGeneration else { return }
+      self.soundbarState = initialState
       if initialMaxIdleTime != self.settings.autoStandbySeconds {
         Logger.lifecycle.info(
           "Auto Standby mismatch detected (soundbar: \(initialMaxIdleTime)s, app setting: \(self.settings.autoStandbySeconds)s). Enforcing app setting."
@@ -503,6 +509,10 @@ final class AppModel: Sendable {
   private func handleAmbeoStatusChange(path: String, isExternal: Bool) {
     Task { @MainActor [weak self] in
       guard let self, let client = self.ambeoClient else { return }
+
+      let latestState = await client.state
+      guard client === self.ambeoClient else { return }
+      self.soundbarState = latestState
 
       // Decoder audio format change: detect Dolby Atmos from soundbar DSP
       if path == AmbeoEndpoint.Audio.DecoderAudioFormat().path {
@@ -885,18 +895,25 @@ final class AppModel: Sendable {
     } else {
       nextLevel = "standard"
     }
+    await setAmbeoLevel(nextLevel)
+  }
+
+  /// Sets the AMBEO level of the currently active preset.
+  func setAmbeoLevel(_ level: String) async {
+    guard let client = ambeoClient else { return }
     let preset = await client.state.preset
     let endpoint = AmbeoEndpoint.Audio.AmbeoLevel(preset: preset)
     do {
       try await client.set(
         endpoint,
-        valueJSON: "{\"type\":\"popcornAmbeoModeLevel\",\"popcornAmbeoModeLevel\":\"\(nextLevel)\"}"
+        valueJSON: "{\"type\":\"popcornAmbeoModeLevel\",\"popcornAmbeoModeLevel\":\"\(level)\"}"
       )
     } catch {
-      Logger.audio.warning("Shortcut: failed to set AMBEO Level (\(error.localizedDescription))")
+      Logger.audio.warning("Failed to set AMBEO Level (\(error.localizedDescription))")
       return
     }
-    Logger.audio.info("Shortcut: AMBEO Level (\(preset)) -> \(nextLevel)")
+    Logger.audio.info("AMBEO Level (\(preset)) -> \(level)")
+    await refreshSoundbarState(from: client)
     await syncAndShowOverlay()
   }
 
@@ -910,17 +927,30 @@ final class AppModel: Sendable {
     } else {
       nextPreset = "adaptive"
     }
+    await setPreset(nextPreset)
+  }
+
+  func setPreset(_ preset: String) async {
+    guard let client = ambeoClient else { return }
     do {
       try await client.set(
         AmbeoEndpoint.Audio.Preset(),
-        valueJSON: "{\"type\":\"popcornAudioPreset\",\"popcornAudioPreset\":\"\(nextPreset)\"}"
+        valueJSON: "{\"type\":\"popcornAudioPreset\",\"popcornAudioPreset\":\"\(preset)\"}"
       )
     } catch {
-      Logger.audio.warning("Shortcut: failed to set Preset (\(error.localizedDescription))")
+      Logger.audio.warning("Failed to set Preset (\(error.localizedDescription))")
       return
     }
-    Logger.audio.info("Shortcut: Preset -> \(nextPreset)")
+    Logger.audio.info("Preset -> \(preset)")
+    await refreshSoundbarState(from: client)
     await syncAndShowOverlay()
+  }
+
+  /// Publishes the client's state right after a local write, without waiting for its echo event.
+  private func refreshSoundbarState(from client: AmbeoClient) async {
+    let latestState = await client.state
+    guard client === ambeoClient else { return }
+    soundbarState = latestState
   }
 
   func toggleNightMode() async {
