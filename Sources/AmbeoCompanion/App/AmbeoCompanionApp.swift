@@ -62,7 +62,16 @@ struct AmbeoCompanionApp: App {
             .labelsHidden()
           }
 
-          Section("AMBEO Level (\(state.preset.capitalized))") {
+          Section("AMBEO (\(state.preset.capitalized))") {
+            Toggle(
+              isOn: Binding(
+                get: { state.isAmbeoMode },
+                set: { _ in Task { await appModel.toggleAmbeoMode() } }
+              )
+            ) {
+              Label("AMBEO Mode", systemImage: "waveform")
+            }
+
             Picker(
               "AMBEO Level",
               selection: Binding(
@@ -77,6 +86,26 @@ struct AmbeoCompanionApp: App {
             .pickerStyle(.inline)
             .labelsHidden()
             .disabled(!state.isAmbeoMode)
+          }
+
+          Section {
+            Toggle(
+              isOn: Binding(
+                get: { state.isNightMode },
+                set: { _ in Task { await appModel.toggleNightMode() } }
+              )
+            ) {
+              Label("Night Mode", systemImage: "moon.fill")
+            }
+
+            Toggle(
+              isOn: Binding(
+                get: { state.isVoiceEnhancement },
+                set: { _ in Task { await appModel.toggleVoiceEnhancement() } }
+              )
+            ) {
+              Label("Voice Enhancement", systemImage: "waveform.and.person.filled")
+            }
           }
 
           Divider()

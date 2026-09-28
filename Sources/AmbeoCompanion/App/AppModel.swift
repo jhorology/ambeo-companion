@@ -878,10 +878,11 @@ final class AppModel: Sendable {
         valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMode)}"
       )
     } catch {
-      Logger.audio.warning("Shortcut: failed to set AMBEO Mode (\(error.localizedDescription))")
+      Logger.audio.warning("Failed to set AMBEO Mode (\(error.localizedDescription))")
       return
     }
-    Logger.audio.info("Shortcut: AMBEO Mode -> \(newMode)")
+    Logger.audio.info("AMBEO Mode -> \(newMode)")
+    await refreshSoundbarState(from: client)
     await syncAndShowOverlay()
   }
 
@@ -963,10 +964,11 @@ final class AppModel: Sendable {
         valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newNight)}"
       )
     } catch {
-      Logger.audio.warning("Shortcut: failed to set Night Mode (\(error.localizedDescription))")
+      Logger.audio.warning("Failed to set Night Mode (\(error.localizedDescription))")
       return
     }
-    Logger.audio.info("Shortcut: Night Mode -> \(newNight)")
+    Logger.audio.info("Night Mode -> \(newNight)")
+    await refreshSoundbarState(from: client)
     await syncAndShowOverlay()
   }
 
@@ -981,11 +983,12 @@ final class AppModel: Sendable {
       )
     } catch {
       Logger.audio.warning(
-        "Shortcut: failed to set Voice Enhancement (\(error.localizedDescription))"
+        "Failed to set Voice Enhancement (\(error.localizedDescription))"
       )
       return
     }
-    Logger.audio.info("Shortcut: Voice Enhancement -> \(newVoice)")
+    Logger.audio.info("Voice Enhancement -> \(newVoice)")
+    await refreshSoundbarState(from: client)
     await syncAndShowOverlay()
   }
 
