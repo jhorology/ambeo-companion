@@ -253,7 +253,7 @@ final class AppModel: Sendable {
         Logger.network.debug("Discovered devices updated: \(devices.count) devices")
         guard !self.settings.ambeoUid.isEmpty,
           let device = devices.first(where: { $0.uuid == self.settings.ambeoUid })
-        else { return }
+        else { continue }
         let currentHost = await self.ambeoClient?.host
         if self.ambeoClient == nil {
           // Selected device just appeared on the network

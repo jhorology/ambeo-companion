@@ -22,6 +22,11 @@ struct SettingsView: View {
           Picker("", selection: $model.settings.ambeoUid) {
             if model.settings.ambeoUid.isEmpty {
               Text(appModel.networkDevices.isEmpty ? "Searching..." : "Select a device").tag("")
+            } else if !appModel.networkDevices.contains(where: {
+              $0.uuid == model.settings.ambeoUid
+            }) {
+              // Selected device is temporarily missing from mDNS results
+              Text("Searching...").tag(model.settings.ambeoUid)
             }
             ForEach(appModel.networkDevices) { device in
               Text(device.name).tag(device.uuid)
@@ -193,7 +198,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.14"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.15"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)

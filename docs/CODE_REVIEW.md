@@ -779,3 +779,28 @@ for await devices in SennheiserDiscovery.browse() {
 ## 見送り
 
 - #2（`AppModel.init()` の副作用）、#3（`AtmosBoostController` 抽出）、#4（スラッシング）、#5–#8（軽微）は未対応。#4 は今回のデバウンス + 再検証で実害が大幅に減っている
+
+---
+
+# 障害対応 2026-09-29 — 設定画面に Network Device の候補が表示されない（v0.1.15 build 16）
+
+### 現象
+サウンドバーを問題なく操作できているのに、設定画面の「AMBEO Soundbar」Picker に候補が出ないことがある（空欄になる）。
+
+### 原因
+`AppModel.startDiscoveringAmbeo()` の `for await` ループで、選択デバイスが結果に含まれない回の `guard` が `else { return }` になっていた。`return` はループではなく Task ごと抜けるため、`AsyncStream` が終了して `onTermination` で `NWBrowser` が cancel され、以降 discovery が一切更新されなくなる。
+
+1. 起動直後、選択デバイスを含む結果が届いて接続する（操作は可能）
+2. mDNS の結果が一時的に選択デバイスを含まない形で 1 回届く（空リストなど）
+3. `guard` で `return` して discovery が停止し、`networkDevices` がそのときの（空の）リストのまま固定される
+4. `AmbeoClient` は旧接続を保持したまま動くので操作はできるが、設定画面には候補が出ない
+
+`ambeoUid` が空（未選択）の場合は、最初の yield で即停止していた。v0.1.12 で追加した IP 変化時の再接続もこの状態では働かない（9/28 対応記録の「デバイス消失: guard で早期 return」の検証は誤りで、実際には discovery 自体が止まっていた）。
+
+### 修正内容
+1. **`AppModel.swift`**: `guard ... else { return }` を `else { continue }` に変更。選択デバイスが見つからない回があっても探索を継続する
+2. **`SettingsView.swift`**: 選択中の `ambeoUid` が `networkDevices` に含まれないとき、`Text("Searching...").tag(ambeoUid)` を Picker に追加。選択値に対応するタグがなく空欄表示になるのを防ぐ。選択値は変えないので設定は書き換わらず、デバイスが再検出されれば自動でデバイス名表示に戻る
+
+### 検証
+- `swift build`（Swift 6.3）成功、`Scripts/format.sh` 適用済み
+- 実機での mDNS 揺らぎ・デバイス消失シナリオでの動作確認は未実施
