@@ -804,3 +804,139 @@ for await devices in SennheiserDiscovery.browse() {
 ### 検証
 - `swift build`（Swift 6.3）成功、`Scripts/format.sh` 適用済み
 - 実機での mDNS 揺らぎ・デバイス消失シナリオでの動作確認は未実施
+
+---
+
+# レビュー 2026-09-29 (2)
+
+> スコープ: 全ソースファイル（v0.1.15, HEAD `f6bf177`）。`swift build`（Swift 6.3）は警告ゼロ。
+> 前回（9/28）の #1（IP 変化時の復帰不能）は v0.1.12 で正しく反映されていることを確認した（`host` を `public let` 化し、discovery ハンドラで `host != device.ip` を判定、3 秒デバウンス + 最新リストで再検証）。#2（init 副作用）/#3（AtmosBoostController 抽出）/#5〜#8 は未対応のまま（下記「継続項目」）。
+> 以下は **v0.1.12〜v0.1.15 で新たに追加されたコード**（メニューバーの状態セクション、`soundbarState` スナップショット、IP 変化再接続、discovery guard 修正）に対するレビュー。
+
+## 全体評価
+
+メニューバーに Preset / AMBEO Level の Picker と AMBEO Mode / Night / Voice の Toggle を追加した 3 回の機能追加は、`soundbarState`（`AmbeoState?` スナップショット）という明確なパターンで実装されており、actor 内の状態を SwiftUI 向けに安全に橋渡しする設計として適切。`client === ambeoClient` の同一性チェック、ローカル書き込み直後の `refreshSoundbarState` による即時 UI 更新、プリセット毎のレベル保持（`ambeoLevels`）と `Preset.apply` での自動切り替え、登録順序に依存しない初期化（task group で全登録完了後に `initialState` を取得）など、細部まで丁寧に考えられている。v0.1.15 の discovery `continue` 修正と SettingsView の "Searching..." タグも最小で正しい。
+
+今回の主な論点は 2 つ。**① メニューが `soundbarState` に依存するようになったことで、再接続のたびに状態セクションが数秒間消える**（UX 上の後退）、**② プリセット変更が飛行中の状態でレベルを変更すると、レベルが旧プリセットに適用される競合**（狭い窓の正しさの問題）。どちらも v0.1.13/14 でメニューが状態依存になったこと由来。
+
+---
+
+## 🔴 高優先度（バグ / 潜在的な不具合）
+
+今回は明確な高優先度はなし。新規コードは全体的に堅牢で、以下は中優先度。
+
+---
+
+## 🟡 中優先度（設計 / 堅牢性）
+
+### 1. `setAmbeoLevel` が飛行中の `setPreset` を見逃し、レベルを旧プリセットに適用する競合
+
+```swift
+// AppModel.swift setAmbeoLevel
+let preset = await client.state.preset          // ← ここで現在のプリセットを読む
+let endpoint = AmbeoEndpoint.Audio.AmbeoLevel(preset: preset)
+try await client.set(endpoint, valueJSON: ...)
+```
+
+`client.set` は応答を受信してデコードできた時点で `client.state.preset` を更新する。つまり `setPreset` の HTTP リクエストが**まだ飛行中**（応答未到着）の間に `setAmbeoLevel` が実行されると、`client.state.preset` は旧値のままなので、レベルが**旧プリセットの** `ambeoModeLevel_<旧>` へ書き込まれる。
+
+結果、ユーザーは「プリセットを movie に変えて boost にしたつもり」が、実際には music 側が boost になり、movie のレベルは変わらない。メニューの Level Picker は movie（不変）のレベルを表示するため、「選択が反映されていない」ように見える。
+
+**窓の広さ**: `.menuBarExtraStyle(.menu)` では Picker の選択でメニューが閉じるため、2 項目の連続操作には「メニュー再オープン」（≈200ms 以上）が必要。LAN の往復（数 ms〜50ms）より長いことが多く、通常は発症しない。ただし (a) サウンドバーの応答が遅い環境、(b) リモコン等でプリセットが外部変更された直後（エコー未到着で `client.state.preset` が古い）にメニュー操作した場合に現実的。
+
+**修正案**（いずれか）:
+- プリセット変更とレベル変更を `enqueueAtmosWork` に倣って直列化する（最も確実。両者は同じ「アクティブプリセット」を前提にするため）
+- `setAmbeoLevel` にプリセットを引数で渡し、UI 側（`state.preset`）から渡す。ただしこれもスナップショットが古い場合は同種の問題が残るため、前者の方が堅い
+
+### 2. 再接続のたびにメニューの状態セクションが消える（`soundbarState = nil`）
+
+```swift
+// AppModel.swift reconnectAmbeoClient
+let previousClient = ambeoClient
+ambeoClient = nil
+soundbarState = nil          // ← ここでメニューの Preset/AMBEO/Toggle 全セクションが非表示に
+```
+
+```swift
+// AmbeoCompanionApp.swift
+if let state = appModel.soundbarState {   // nil の間はセクション全体が消失
+  Section("Preset") { ... }
+  Section("AMBEO (...)") { ... }
+  Section { ... Toggles ... }
+  Divider()
+}
+```
+
+v0.1.13 以前はメニューに状態依存セクションがなかったため、再接続（`ambeoClient = nil`）がユーザーに見せる変化は「Wake Up Soundbar が無効になる」程度だった。今回は **IP 変化・デバイス再選択・スリープ復帰のたびに、メニュー上半分（Preset/AMBEO/Toggle）が新しいクライアントの初期同期完了まで（数秒）消えて再从る**。v0.1.12 が狙う「IP が変わって再接続される」はまさにこの経路なので、修正の恩恵を受ける场景で必ずフリッカが発生する。
+
+**修正案**（いずれか）:
+- 再接続時に `soundbarState` を nil にせず、**直前値を保持**したまま新クライアントの同期完了で差し替える（nil にするのは「デバイス未選択」の初期状態のみ）。最もシンプルで、フリッカも消える
+- nil にしつつもメニュー側に「Reconnecting...」のような中間表現を出す（`ambeoClient == nil && かつて接続済み` の判定が必要）
+
+### 3. Toggle の表示（スナップショット）と動作（ライブ状態）が非対称
+
+```swift
+Toggle(isOn: Binding(
+  get: { state.isAmbeoMode },                          // ← soundbarState スナップショット
+  set: { _ in Task { await appModel.toggleAmbeoMode() } }  // ← client.state（ライブ）を反転
+))
+```
+
+`toggleAmbeoMode` は `client.state`（ライブ）を読んで反転するが、Toggle の表示は `soundbarState`（スナップショット）。
+- リモコン等で外部変更があり、エコー（ポーリング）が未到着の窓の中で Toggle を押すと、表示は旧値のままなので「OFF にしたつもり」がライブでは ON → 反転して OFF になり、**表示が変わらず「押しても効かない」に見える**ケースが起き得る
+- ポーリングは long-poll（2 秒 timeout、変更があれば即返り）なので窓は小さいが、ゼロではない
+
+**修正案**: メニューを開いた瞬間に `refreshSoundbarState` を呼んでスナップショットを最新化すると、実務上ほぼ閉じられる（MenuBarExtra に onOpen 相当のフックが乏しいのが難点）。あるいは「表示も動作もライブ側から読む」よう Binding を再設計する。
+
+---
+
+## 🟢 低優先度（軽微）
+
+### 4. `ipChangeTask` が `reconnectAmbeoClient` でキャンセルされない
+
+`reconnectAmbeoClient` は `clientTask` / `atmosDeactivationTask` / `atmosTransitionTask` をキャンセルするが `ipChangeTask` は対象外（スリープ時のみキャンセル）。デバイス再選択等で再接続した後に保留中の `ipChangeTask` が発火し得るが、タスク内で `host != device.ip` を再検証するため誤再接続にはならない（安全）。ただ生成番号（`clientGeneration`）を参照するとより明確。
+
+### 5. set 系メソッドで `client.state` を 2 回読んでいる
+
+`setPreset` / `setAmbeoLevel` / `toggle*` が `refreshSoundbarState(from:)`（`client.state` を読む）の直後に `syncAndShowOverlay()`（再び `client.state` を読む）を呼び、actor hop が 2 回。バグではないが、1 回読んで両方に渡す形にできる。
+
+### 6. `presetIcon` が "neutral" を明示処理していない
+
+`allPresets` に "neutral" があるが、`presetIcon` の switch に case がなく `default`（`slider.horizontal.3`）に落ちる。動作上は問題ないが、明示 case にすると意図が明確。
+
+### 7. `presetIcon` / `ambeoLevelIcon` が `App` struct 側に置かれている
+
+ビュー層のヘルパーが `AmbeoCompanionApp`（Scene 側）の static になっている。メニュービューや独立ヘルパーへ移した方が整理されやすい。
+
+### 8. SettingsView のバージョンフォールバックが依然ハードコード
+
+`?? "0.1.15"` に更新されたが、前回 #8 で指摘の通り次回リリースで陳腐化する。`CFBundleShortVersionString` の単一出力源化（Info.plist 参照の失敗時のみ別の既定値）を検討。
+
+---
+
+## 継続項目（前回 9/28 レビューから未対応）
+
+| # | 内容 | 現状 |
+|---|---|---|
+| 2 | `AppModel.init()` が重い副作用を持ち `@State` 初期値として生成 | 未対応。init が discovery/CoreAudio/CGEventTap/通知/ホットキーを起動 |
+| 3 | `AppModel` の肥大化（`AtmosBoostController` 抽出） | 未対応。**1026 行**に増加（前回 967 行）。メニュー操作系（`setPreset`/`setAmbeoLevel`/`toggle*`/`refreshSoundbarState`）も追加され、抽出候補がさらに明確に |
+| 5 | `property<T>` の `buffer.baseAddress!` 強制アンラップ | 未対応（`0 < size < MemoryLayout<T>.size` でクラッシュし得る） |
+| 6 | セッション内の stale エコートークン | 未対応（再サブスクライブ時のみクリア） |
+| 7 | `markInitialSyncCompleted` が最初の poll 応答前に呼ばれる | 未対応 |
+| 8 | 軽微（`AmbeoUpdateEvent` 死コード / `#available(macOS 13)` 冗長 / `didOfferDeviceSetup` がメモリのみ / Experiment ターゲット） | 未対応（#8 のバージョンフォールバックのみ "0.1.15" に更新） |
+
+---
+
+## 推奨アクション（優先度順）
+
+| # | 内容 | 工数 |
+|---|---|---|
+| 2 | 再接続時の `soundbarState` nil 化を見直し（直前値保持） | 極小〜小 |
+| 1 | プリセット/レベル変更の直列化（またはプリセット引数化） | 小 |
+| 3 | Toggle の表示/動作の非対称（メニュー開き時に更新） | 小 |
+| 3(継続) | `AtmosBoostController` 抽出（AppModel 1026 行） | 中 |
+| 4〜8 | 軽微修正のバッチ処理 | 極小 |
+
+**#2（フリッカ）が最もユーザーに見えやすい**ので、次リリースで対応することを推奨。#1 は「操作が反映されない」に見える正しさの問題なので、セットで潰しておくと安心。#3 は long-poll により窓が小さいため、余裕があれば、の程度。
+
+全体として、v0.1.12〜v0.1.15 は「前回レビューの最重要項目（IP 変化復帰不能）を小さく確実な修正で潰し、メニューバーから主要設定を直接操作できる」ようになった、質の高い一連の変更。`soundbarState` スナップショットという新しい依存関係を導入したことで、そのライフサイクル（再接続時の nil 化）と UI の整合性をどう扱うかが、次の焦点になる。
