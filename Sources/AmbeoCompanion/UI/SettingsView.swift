@@ -118,7 +118,7 @@ struct SettingsView: View {
             "Volume offset automatically applied when switching between Dolby Atmos and stereo playback."
         ) {
           HStack {
-            Slider(value: $model.settings.atmosBoostAmount, in: 0...40, step: 1)
+            Slider(value: $model.settings.atmosBoostAmount, in: 0...40, step: 5)
               .frame(width: 150)
             Text("\(Int(model.settings.atmosBoostAmount))%")
               .monospacedDigit()
@@ -198,7 +198,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.16"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.17"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)

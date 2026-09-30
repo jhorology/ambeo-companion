@@ -126,15 +126,42 @@ struct VolumeOverlayView: View {
 
   private let ledCyan = Color(red: 0.15, green: 0.78, blue: 1.0)
   private let ledPurple = Color(red: 0.75, green: 0.35, blue: 1.0)
+  private let ledWhite = Color(red: 0.75, green: 0.75, blue: 0.75)
   private let ledDim = Color.white.opacity(0.18)
+
+  @State private var flashOpacity: Double = 1.0
 
   private var activeLedColor: Color {
     if state.isNightMode {
       return ledPurple
-    } else if state.isAmbeoMode {
+    } else if state.isVoiceEnhancement {
       return ledCyan
+    } else if state.isAmbeoMode {
+      return ledWhite
     } else {
       return ledDim
+    }
+  }
+
+  /// AMBEO brightness based on level:
+  /// Off: dim (0.2)
+  /// Light: subtle glow (0.55)
+  /// Standard: medium glow (0.8)
+  /// Boost: full brightness (1.0)
+  private var logoBrightnessMultiplier: Double {
+    guard state.isAmbeoMode else { return 0.25 }
+    switch state.ambeoLevel.lowercased() {
+    case "light": return 0.55
+    case "boost": return 1.0
+    default: return 0.8
+    }
+  }
+
+  private var flashCount: Int {
+    switch state.ambeoLevel.lowercased() {
+    case "light": return 1
+    case "boost": return 3
+    default: return 2
     }
   }
 
@@ -147,13 +174,11 @@ struct VolumeOverlayView: View {
       VStack(spacing: 6) {
         HStack(spacing: 12) {
           Image(systemName: iconName)
-            .font(.system(size: 22, weight: .light))
+            .font(.system(size: 20, weight: .light))
             .foregroundStyle(.primary)
-            .frame(width: 26)
+            .frame(width: 24)
 
-          Gauge(value: state.isMuted ? 0 : state.volume) {}
-            .gaugeStyle(.accessoryLinear)
-            .tint(state.isMuted ? Color.secondary : activeLedColor)
+          volumeGaugeWithTicks
 
           Text(state.isMuted ? "Muted" : "\(Int(state.volume * 100))%")
             .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -217,81 +242,219 @@ struct VolumeOverlayView: View {
     .animation(.smooth(duration: 0.25), value: state.isAmbeoMode)
     .animation(.smooth(duration: 0.15), value: state.volume)
     .animation(.smooth(duration: 0.15), value: state.isMuted)
+    .onChange(of: state.ambeoLevel) { _, _ in
+      triggerFlashAnimation()
+    }
+    .onChange(of: state.isAmbeoMode) { _, isAmbeo in
+      if isAmbeo {
+        triggerFlashAnimation()
+      }
+    }
+  }
+
+  private func triggerFlashAnimation() {
+    guard state.isAmbeoMode else { return }
+    let count = flashCount
+    Task { @MainActor in
+      for _ in 0..<count {
+        withAnimation(.easeOut(duration: 0.1)) {
+          flashOpacity = 0.2
+        }
+        try? await Task.sleep(for: .milliseconds(110))
+        withAnimation(.easeIn(duration: 0.12)) {
+          flashOpacity = 1.0
+        }
+        try? await Task.sleep(for: .milliseconds(130))
+      }
+    }
+  }
+
+  // MARK: - Volume Gauge with Ticks
+
+  private var volumeGaugeWithTicks: some View {
+    GeometryReader { geo in
+      let width = geo.size.width
+      let height: CGFloat = 6
+      let progress = state.isMuted ? 0.0 : max(0.0, min(1.0, state.volume))
+
+      ZStack(alignment: .leading) {
+        // Track Background
+        Capsule()
+          .fill(Color.white.opacity(0.12))
+          .frame(height: height)
+
+        // Progress Fill
+        Capsule()
+          .fill(state.isMuted ? Color.secondary : activeLedColor)
+          .frame(width: max(0, width * progress), height: height)
+          .shadow(
+            color: state.isMuted ? .clear : activeLedColor.opacity(0.4),
+            radius: 3,
+            x: 0,
+            y: 0
+          )
+
+        // Tick marks (every 25%: 0%, 25%, 50%, 75%, 100%)
+        HStack {
+          ForEach(0...4, id: \.self) { i in
+            if i > 0 {
+              Spacer()
+            }
+            Rectangle()
+              .fill(Color.white.opacity(0.35))
+              .frame(width: 1, height: height + 4)
+          }
+        }
+        .allowsHitTesting(false)
+      }
+      .frame(height: geo.size.height, alignment: .center)
+    }
+    .frame(height: 12)
   }
 
   // MARK: - AMBEO LED Logo
 
   private var ambeoLogoHeader: some View {
-    HStack(alignment: .center, spacing: 8) {
-      // Product LED-style AMBEO text
-      Text("AMBEO")
-        .font(.system(size: 17, weight: .heavy, design: .default))
-        .tracking(3.5)
+    HStack(alignment: .center, spacing: 10) {
+      // Left side: AMBEO logo & optional DOLBY ATMOS
+      HStack(alignment: .center, spacing: 10) {
+        // Product LED-style AMBEO text with brightness modulation and flash
+        Text("AMBΞO")
+          .font(.system(size: 17, weight: .heavy, design: .default))
+          .tracking(3.5)
+          .foregroundStyle(activeLedColor.opacity(logoBrightnessMultiplier * flashOpacity))
+          .shadow(
+            color: (state.isNightMode || state.isAmbeoMode)
+              ? activeLedColor.opacity(0.9 * logoBrightnessMultiplier * flashOpacity) : .clear,
+            radius: 6,
+            x: 0,
+            y: 0
+          )
+          .shadow(
+            color: (state.isNightMode || state.isAmbeoMode)
+              ? activeLedColor.opacity(0.4 * logoBrightnessMultiplier * flashOpacity) : .clear,
+            radius: 14,
+            x: 0,
+            y: 0
+          )
+
+        if state.isAtmos {
+          dolbyAtmosBadge
+            .transition(.opacity)
+        }
+      }
+
+      Spacer(minLength: 0)
+
+      // Right side: Preset (pinned to right so it doesn't shift when Atmos toggles)
+      if let preset = state.audioPreset {
+        HStack(spacing: 4) {
+          Image(systemName: presetIcon(preset.lowercased()))
+            .font(.system(size: 10, weight: .bold))
+          Text(preset.uppercased())
+            .font(.system(size: 10, weight: .heavy, design: .rounded))
+            .tracking(0.8)
+        }
         .foregroundStyle(activeLedColor)
         .shadow(
-          color: (state.isNightMode || state.isAmbeoMode) ? activeLedColor.opacity(0.9) : .clear,
-          radius: 6,
+          color: activeLedColor.opacity(0.8),
+          radius: 5,
           x: 0,
           y: 0
         )
         .shadow(
-          color: (state.isNightMode || state.isAmbeoMode) ? activeLedColor.opacity(0.4) : .clear,
-          radius: 14,
+          color: activeLedColor.opacity(0.35),
+          radius: 10,
           x: 0,
           y: 0
         )
-
-      Spacer()
-
-      // Preset & AMBEO 3D Level Indicator
-      HStack(spacing: 5) {
-        if state.isAtmos {
-          Text("ATMOS")
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundStyle(ledCyan)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(ledCyan.opacity(0.18)))
-            .overlay(Capsule().strokeBorder(ledCyan.opacity(0.5), lineWidth: 0.8))
-        }
-
-        if let preset = state.audioPreset {
-          Text(preset.capitalized)
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Color.white.opacity(0.08)))
-        }
-
-        if state.isAmbeoMode {
-          HStack(spacing: 2.5) {
-            ForEach(0..<3) { idx in
-              RoundedRectangle(cornerRadius: 1)
-                .fill(idx <= levelIndex ? activeLedColor : Color.white.opacity(0.15))
-                .frame(width: 3, height: 8 + CGFloat(idx) * 2)
-            }
-          }
-          .padding(.leading, 2)
-
-          Text(state.ambeoLevel.uppercased())
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundStyle(activeLedColor)
-        } else {
-          Text("OFF")
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundStyle(ledDim)
-        }
       }
     }
     .padding(.bottom, 2)
   }
 
-  private var levelIndex: Int {
-    switch state.ambeoLevel.lowercased() {
-    case "light": return 0
-    case "boost": return 2
-    default: return 1  // standard
+  // Custom Dolby Double-D icon + ATMOS text
+  private var dolbyAtmosBadge: some View {
+    HStack(spacing: 4.5) {
+      dolbyDoubleDIcon
+      Text("ATMOS")
+        .font(.system(size: 10, weight: .heavy, design: .rounded))
+        .tracking(0.8)
+    }
+    .foregroundStyle(activeLedColor)
+    .shadow(
+      color: activeLedColor.opacity(0.8),
+      radius: 5,
+      x: 0,
+      y: 0
+    )
+    .shadow(
+      color: activeLedColor.opacity(0.35),
+      radius: 10,
+      x: 0,
+      y: 0
+    )
+  }
+
+  /// Official-style Dolby logo (two D shapes facing each other: Dᗡ)
+  private var dolbyDoubleDIcon: some View {
+    HStack(spacing: 1.5) {
+      // Left D (standard D: flat back on left, curved belly on right facing inward)
+      Rectangle()
+        .fill(activeLedColor)
+        .frame(width: 5, height: 9)
+        .clipShape(
+          UnevenRoundedRectangle(
+            topLeadingRadius: 0,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 3.5,
+            topTrailingRadius: 3.5
+          )
+        )
+        .overlay {
+          // Hollow cut inside left D
+          UnevenRoundedRectangle(
+            topLeadingRadius: 0,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 2,
+            topTrailingRadius: 2
+          )
+          .stroke(Color.black.opacity(0.6), lineWidth: 1.2)
+        }
+
+      // Right D (mirrored D: curved belly on left facing inward, flat back on right)
+      Rectangle()
+        .fill(activeLedColor)
+        .frame(width: 5, height: 9)
+        .clipShape(
+          UnevenRoundedRectangle(
+            topLeadingRadius: 3.5,
+            bottomLeadingRadius: 3.5,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 0
+          )
+        )
+        .overlay {
+          // Hollow cut inside right D
+          UnevenRoundedRectangle(
+            topLeadingRadius: 2,
+            bottomLeadingRadius: 2,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 0
+          )
+          .stroke(Color.black.opacity(0.6), lineWidth: 1.2)
+        }
+    }
+  }
+
+  private func presetIcon(_ preset: String) -> String {
+    switch preset {
+    case "adaptive": return "wand.and.stars"
+    case "music": return "music.note"
+    case "movie": return "film"
+    case "news": return "newspaper"
+    case "sports": return "sportscourt"
+    default: return "slider.horizontal.3"
     }
   }
 
