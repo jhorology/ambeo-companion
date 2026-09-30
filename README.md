@@ -53,19 +53,26 @@ It resolves volume adjustment limitations in macOS eARC / HDMI passthrough setup
 
 ## Build & Packaging
 
-### 1. Debug Build
-Build using SPM (Swift Package Manager):
+Build using SPM (Swift Package Manager). Xcode is not required.
+
+### 1. Debug Run
+
+```bash
+swift run AmbeoCompanion
+```
+
+### 2. Debug Build
 
 ```bash
 swift build
 ```
 
-### 2. Release Build
+### 3. Release Build
 ```bash
 swift build -c release --product AmbeoCompanion
 ```
 
-### 3. Package macOS App Bundle (`AmbeoCompanion.app`)
+### 4. Package macOS App Bundle (`AmbeoCompanion.app`)
 Run the included packaging script to compile the release build, bundle resources, and apply ad-hoc code signing automatically:
 
 ```bash

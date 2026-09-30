@@ -55,19 +55,24 @@ macOS の eARC / HDMI パススルー環境における音量調整の制約を�
 
 ## ビルド & パッケージング手順
 
-### 1. 開発ビルド (Debug)
-SPM (Swift Package Manager) を使用してビルドします。
+SPM (Swift Package Manager) を使用してビルドします。Xcode は必ずしも必要ではありません。
 
+### 1. デバッグ実行
+```bash
+swift run AmbeoCompanion
+```
+
+### 2. 開発ビルド
 ```bash
 swift build
 ```
 
-### 2. リリースバイナリのビルド
+### 3. リリースバイナリのビルド
 ```bash
 swift build -c release --product AmbeoCompanion
 ```
 
-### 3. macOS アプリバンドル (`AmbeoCompanion.app`) のパッケージング
+### 4. macOS アプリバンドル (`AmbeoCompanion.app`) のパッケージング
 付属のパッケージスクリプトを実行することで、Release ビルドのコンパイル、リソース同梱、アドホックコード署名までを自動で行います。
 
 ```bash

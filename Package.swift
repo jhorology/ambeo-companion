@@ -10,7 +10,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-log.git", from: "1.15.1"),
-    .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "2.0.0"),
+    .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.1.0"),
   ],
   targets: [
     // Core
