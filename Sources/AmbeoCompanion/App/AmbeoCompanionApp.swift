@@ -3,6 +3,7 @@ import Logging
 import SwiftUI
 
 struct AmbeoCompanionApp: App {
+  @NSApplicationDelegateAdaptor(CompanionAppDelegate.self) private var delegate
   @State private var appModel = AppModel()
   @State private var didOfferDeviceSetup = false
   @Environment(\.openWindow) private var openWindow
@@ -170,5 +171,21 @@ struct AmbeoCompanionApp: App {
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 450, height: 500)
+  }
+}
+
+@MainActor
+final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
+  private var isTerminating = false
+
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard let model = AppModel.runningInstance else { return .terminateNow }
+    guard !isTerminating else { return .terminateLater }
+    isTerminating = true
+    Task {
+      await model.prepareForTermination()
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
   }
 }

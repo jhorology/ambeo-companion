@@ -38,6 +38,7 @@ struct AppSettings: Codable {
 @Observable
 @MainActor
 final class AppModel: Sendable {
+  static weak var runningInstance: AppModel?
   private let storageKey = "\(Bundle.id).Setting"
   private let hookedKeys: [SystemEvent.MediaKey] = [.soundUp, .soundDown, .mute]
 
@@ -56,7 +57,15 @@ final class AppModel: Sendable {
   private var isCoreAudioAtmos: Bool = false
   private var isSoundbarAtmos: Bool = false
   private(set) var isAtmosActive: Bool = false
-  private var appliedAtmosBoost: Int = 0
+  private var connectedUid = ""
+  private var isShuttingDown = false
+  private let boostLedger = AtmosBoostLedger(key: "\(Bundle.id).AtmosBoostLedger")
+  private var appliedAtmosBoost: Int {
+    get { boostLedger.amount(for: connectedUid) }
+    set {
+      boostLedger.record(newValue, for: connectedUid)
+    }
+  }
   private var atmosDeactivationTask: Task<Void, Never>?
   private var atmosTransitionTask: Task<Void, Never>?
   private var lastOSDTask: Task<Void, Never>?
@@ -121,6 +130,7 @@ final class AppModel: Sendable {
     } else {
       settings = AppSettings()
     }
+    Self.runningInstance = self
     checkLaunchAtLoginStatus()
     startDiscoveringAmbeo()
     startMonitoringAudioDevice()
@@ -166,14 +176,14 @@ final class AppModel: Sendable {
   // MARK: - AmbeoClient (State Manager)
 
   private func reconnectAmbeoClient() {
+    guard !isShuttingDown else { return }
     clientGeneration += 1
     let generation = clientGeneration
 
-    clientTask?.cancel()
+    let previousConnection = clientTask
     atmosDeactivationTask?.cancel()
     atmosDeactivationTask = nil
-    atmosTransitionTask?.cancel()
-    atmosTransitionTask = nil
+    let previousTransition = atmosTransitionTask
 
     let previousClient = ambeoClient
     ambeoClient = nil
@@ -183,17 +193,24 @@ final class AppModel: Sendable {
     // If a boost was already applied to the soundbar hardware, resetting appliedAtmosBoost to 0
     // would cause the re-established client to apply another boost on top (+25% twice).
     isAtmosActive = appliedAtmosBoost > 0
-    isCoreAudioAtmos = false
     isSoundbarAtmos = false
 
     let uid = settings.ambeoUid
     let host = networkDevices.first(where: { $0.uuid == uid })?.ip
 
     clientTask = Task {
+      await previousConnection?.value
       await previousClient?.stopObserving()
+      await previousTransition?.value
+      guard !Task.isCancelled, generation == self.clientGeneration else { return }
+      if uid != self.connectedUid, let previousClient {
+        await self.revertOutstandingBoost(using: previousClient)
+      }
       guard !Task.isCancelled, generation == self.clientGeneration else { return }
       guard !uid.isEmpty, let host else { return }
 
+      self.connectedUid = uid
+      self.isAtmosActive = self.appliedAtmosBoost > 0
       let client = AmbeoClient(host: host)
       self.ambeoClient = client
 
@@ -375,7 +392,8 @@ final class AppModel: Sendable {
       return
     }
     let current = AudioDeviceMonitor.shared.currentPhysicalFormat(for: device.id)
-    if current?.id != format.id {
+    guard let current, !current.isAtmosOrMultichannel else { return }
+    if current.id != format.id {
       AudioDeviceMonitor.shared.fallback(format: format, for: device.id)
       Logger.audio.info("Applied fallback format: \(format.displayName)")
     }
@@ -461,7 +479,7 @@ final class AppModel: Sendable {
   }
 
   private func handleMediaKey(_ key: SystemEvent.MediaKey) async {
-    guard let client = ambeoClient else { return }
+    guard !isShuttingDown, let client = ambeoClient else { return }
 
     switch key {
     case .mute:
@@ -575,6 +593,7 @@ final class AppModel: Sendable {
     if let ca = coreAudioAtmos { isCoreAudioAtmos = ca }
     if let sa = soundbarAtmos { isSoundbarAtmos = sa }
 
+    guard !isShuttingDown else { return }
     let rawIsAtmos = isCoreAudioAtmos || isSoundbarAtmos
 
     if rawIsAtmos {
@@ -641,7 +660,7 @@ final class AppModel: Sendable {
 
   private func handleAtmosTransition(isAtmos: Bool) async {
     // A later transition may have flipped the state while this one waited in the queue.
-    guard isAtmos == isAtmosActive, let client = ambeoClient else { return }
+    guard !isShuttingDown, isAtmos == isAtmosActive, let client = ambeoClient else { return }
 
     if isAtmos {
       Logger.audio.info(
@@ -685,7 +704,9 @@ final class AppModel: Sendable {
     guard isAtmosActive else { return }
 
     enqueueAtmosWork { model in
-      guard model.isAtmosActive, let client = model.ambeoClient else { return }
+      guard !model.isShuttingDown, model.isAtmosActive, let client = model.ambeoClient else {
+        return
+      }
       // Read the target at run time: several slider changes may be queued.
       let delta = Int(model.settings.atmosBoostAmount) - model.appliedAtmosBoost
       guard delta != 0 else { return }
@@ -703,6 +724,39 @@ final class AppModel: Sendable {
         "Atmos Boost adjusted: \(current) → \(newVol) (\(actualDelta >= 0 ? "+" : "")\(actualDelta)%)"
       )
       await model.syncAndShowOverlay()
+    }
+  }
+
+  /// Keep the per-device ledger if the device is unreachable; reconnect can retry safely.
+  private func revertOutstandingBoost(using client: AmbeoClient) async {
+    let uid = connectedUid
+    let boost = boostLedger.amount(for: uid)
+    guard boost > 0 else { return }
+    do {
+      if try await client.removeVolumeBoost(boost) { boostLedger.record(0, for: uid) }
+    } catch {
+      Logger.audio.warning(
+        "Boost cleanup failed: \(error.localizedDescription). Preserving device ledger."
+      )
+    }
+  }
+
+  func prepareForTermination() async {
+    isShuttingDown = true
+    saveTask?.cancel()
+    saveSettings()
+    discoveringAmbeoTask?.cancel()
+    ipChangeTask?.cancel()
+    clientGeneration += 1
+    await clientTask?.value
+    monitoringAudioDeviceTask?.cancel()
+    stopMonitoringFormat()
+    monitoringSystemEventTask?.cancel()
+    atmosDeactivationTask?.cancel()
+    await atmosTransitionTask?.value
+    if let client = ambeoClient {
+      await revertOutstandingBoost(using: client)
+      await client.stopObserving()
     }
   }
 

@@ -34,9 +34,9 @@ public actor AmbeoClient {
     pollTask = nil
   }
 
-  public init(host: String) {
+  public init(host: String, configuration: URLSessionConfiguration = .default) {
     self.host = host
-    let config = URLSessionConfiguration.default
+    let config = configuration
     config.timeoutIntervalForRequest = 10.0
     self.session = URLSession(configuration: config)
   }
@@ -151,6 +151,12 @@ public actor AmbeoClient {
     if let single = try? decoder.decode(AmbeoEntry<E>.self, from: data) {
       stateCache[endpoint.path] = single
       return single.value
+    }
+    if let entries = try? decoder.decode([AmbeoEntry<E>].self, from: data),
+      let entry = entries.first
+    {
+      stateCache[endpoint.path] = entry
+      return entry.value
     }
     return nil
   }
@@ -351,7 +357,7 @@ public actor AmbeoClient {
     }
   }
 
-  public func getValue<E: AmbeoEndpointProtocol>(for endpoint: E) -> E.Payload? {
+  public func getValue<E: AmbeoEndpointProtocol>(for endpoint: E) async -> E.Payload? {
     if let stored = latestValues[endpoint.path] {
       guard let latest = stored as? E.Payload else {
         Logger.network.error(
@@ -361,10 +367,15 @@ public actor AmbeoClient {
       }
       return latest
     }
-    return getEntry(for: endpoint)?.value
+    return await getEntry(for: endpoint)?.value
   }
 
-  public func getEntry<E: AmbeoEndpointProtocol>(for endpoint: E) -> AmbeoEntry<E>? {
+  public func getEntry<E: AmbeoEndpointProtocol>(for endpoint: E) async -> AmbeoEntry<E>? {
+    if stateCache[endpoint.path] == nil {
+      if let value = await fetchDirectValue(for: endpoint) {
+        updateState(path: endpoint.path, newValue: value)
+      }
+    }
     guard let cached = stateCache[endpoint.path] else { return nil }
     guard let entry = cached as? AmbeoEntry<E> else {
       Logger.network.error(
@@ -418,6 +429,19 @@ public actor AmbeoClient {
         expectedEchoValues[endpoint.path, default: []].insert(echoToken(v))
       }
     }
+  }
+
+  /// Removes an offset using a fresh hardware read, including after a lost poll connection.
+  /// False means no usable volume was fetched; callers must preserve their recovery ledger.
+  public func removeVolumeBoost(_ amount: Int) async throws -> Bool {
+    guard amount > 0 else { return true }
+    let endpoint = AmbeoEndpoint.Player.Volume()
+    guard let current = await fetchDirectValue(for: endpoint),
+      let entry = stateCache[endpoint.path] as? AmbeoEntry<AmbeoEndpoint.Player.Volume>
+    else { return false }
+    let volume = max(entry.edit?.min ?? 0, current - amount)
+    try await set(endpoint, valueJSON: "{\"type\":\"i32_\",\"i32_\":\(volume)}")
+    return true
   }
 
   /// Triggers an action on an AMBEO endpoint using `role=activate`.
