@@ -9,6 +9,20 @@ struct SettingsView: View {
   @State private var availableAudioDevices: [AudioDevice] = []
   @State private var supportedFormats: [AudioPhysicalFormat] = []
 
+  /// Picker writes `""` when the saved UID is missing from its tags (first frame, or the
+  /// output dropped out of CoreAudio's list). Ignore that write so the setting stays put.
+  private var soundOutputSelection: Binding<String> {
+    Binding(
+      get: { appModel.settings.audioDeviceUid },
+      set: { newValue in
+        if newValue.isEmpty, !appModel.settings.audioDeviceUid.isEmpty {
+          return
+        }
+        appModel.settings.audioDeviceUid = newValue
+      }
+    )
+  }
+
   var body: some View {
     @Bindable var model = appModel
 
@@ -45,9 +59,13 @@ struct SettingsView: View {
           subtitle:
             "Choose the physical audio output for your AMBEO soundbar. If connected via eARC, this is typically the display's audio device."
         ) {
-          Picker("", selection: $model.settings.audioDeviceUid) {
+          Picker("", selection: soundOutputSelection) {
             if model.settings.audioDeviceUid.isEmpty {
               Text("Select a device").tag("")
+            } else if !availableAudioDevices.contains(where: {
+              $0.uid == model.settings.audioDeviceUid
+            }) {
+              Text("Not Connected").tag(model.settings.audioDeviceUid)
             }
             ForEach(availableAudioDevices) { device in
               Text(device.name).tag(device.uid)
@@ -65,6 +83,13 @@ struct SettingsView: View {
             "Format applied when Dolby Atmos passthrough is inactive, preventing macOS from defaulting to 192 kHz."
         ) {
           Picker("", selection: $model.settings.fallbackAudioFormatID) {
+            if !model.settings.fallbackAudioFormatID.isEmpty,
+              !supportedFormats.contains(where: { $0.id == model.settings.fallbackAudioFormatID })
+            {
+              // Same as Sound Output: keep the stored format tagged until the device's
+              // format list is available again, so the Picker cannot clear it.
+              Text(model.settings.fallbackAudioFormatID).tag(model.settings.fallbackAudioFormatID)
+            }
             ForEach(supportedFormats) { format in
               Text(format.displayName).tag(format.id)
             }
@@ -198,7 +223,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.18"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.19"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)
