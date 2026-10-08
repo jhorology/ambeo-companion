@@ -45,6 +45,7 @@ final class AppModel: Sendable {
   private var saveTask: Task<Void, Never>?
   private var discoveringAmbeoTask: Task<Void, Never>?
   private var monitoringAudioDeviceTask: Task<Void, Never>?
+  private var monitoringOutputDevicesTask: Task<Void, Never>?
   private var monitoringFormatTask: Task<Void, Never>?
   /// Device and output stream that `monitoringFormatTask` observes.
   private var monitoredFormatSource: (device: AudioDeviceID, stream: AudioStreamID)?
@@ -101,6 +102,7 @@ final class AppModel: Sendable {
 
   private(set) var networkDevices: [SennheiserNetworkDevice] = []
   private(set) var currentAudioDevice: AudioDevice? = nil
+  private(set) var availableAudioDevices: [AudioDevice] = []
   private(set) var ambeoClient: AmbeoClient? = nil
   /// Snapshot of the soundbar state for SwiftUI observers such as the menu bar. `nil` until the
   /// client finishes its initial sync.
@@ -306,8 +308,18 @@ final class AppModel: Sendable {
 
   private func startMonitoringAudioDevice() {
     monitoringAudioDeviceTask?.cancel()
+    monitoringOutputDevicesTask?.cancel()
+    monitoringOutputDevicesTask = Task {
+      for await devices in AudioDeviceMonitor.shared.outputDevicesStream {
+        guard !Task.isCancelled else { return }
+        self.availableAudioDevices = devices
+        self.reconcileAudioDeviceSelection(in: devices)
+        self.updateFormatMonitoringForActiveDevice()
+      }
+    }
     monitoringAudioDeviceTask = Task {
       for await device in AudioDeviceMonitor.shared.defaultDeviceStream {
+        guard !Task.isCancelled else { return }
         self.currentAudioDevice = device
         Logger.audio.debug("Default audio device changed: \(String(describing: device))")
 
@@ -321,6 +333,14 @@ final class AppModel: Sendable {
         self.applyFallbackFormatIfNeeded(for: curDev)
       }
     }
+  }
+
+  private func reconcileAudioDeviceSelection(in devices: [AudioDevice]) {
+    guard let device = AudioDeviceSelection.resolve(uid: settings.audioDeviceUid, in: devices),
+      device.uid != settings.audioDeviceUid
+    else { return }
+    Logger.audio.info("Recovered display output UID: \(settings.audioDeviceUid) -> \(device.uid)")
+    settings.audioDeviceUid = device.uid
   }
 
   private func updateFormatMonitoringForActiveDevice() {
@@ -751,6 +771,7 @@ final class AppModel: Sendable {
     await clientTask?.value
     monitoringAudioDeviceTask?.cancel()
     stopMonitoringFormat()
+    monitoringOutputDevicesTask?.cancel()
     monitoringSystemEventTask?.cancel()
     atmosDeactivationTask?.cancel()
     await atmosTransitionTask?.value
@@ -785,6 +806,7 @@ final class AppModel: Sendable {
       Task { @MainActor [weak self] in
         guard let self else { return }
         self.monitoringAudioDeviceTask?.cancel()
+        self.monitoringOutputDevicesTask?.cancel()
         self.stopMonitoringFormat()
         self.atmosDeactivationTask?.cancel()
         self.atmosDeactivationTask = nil

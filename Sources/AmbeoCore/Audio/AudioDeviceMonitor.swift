@@ -7,6 +7,37 @@ public struct AudioDevice: Sendable, Identifiable, Hashable {
   public let id: AudioDeviceID
   public let uid: String
   public let name: String
+  public var transportType: UInt32 = kAudioDeviceTransportTypeUnknown
+}
+
+public enum AudioDeviceSelection {
+  /// Prefer the exact UID. Some display outputs acquire an eight-digit hex suffix when
+  /// CoreAudio re-creates them. Recover only this observed UUID form, on HDMI/DisplayPort,
+  /// and only when it identifies a single output. Other drivers' UIDs remain opaque.
+  public static func resolve(uid: String, in devices: [AudioDevice]) -> AudioDevice? {
+    guard !uid.isEmpty else { return nil }
+    if let exact = devices.first(where: { $0.uid == uid }) { return exact }
+    guard let identity = displayIdentity(uid) else { return nil }
+    let matches = devices.filter {
+      ($0.transportType == kAudioDeviceTransportTypeHDMI
+        || $0.transportType == kAudioDeviceTransportTypeDisplayPort)
+        && displayIdentity($0.uid) == identity
+    }
+    return matches.count == 1 ? matches.first : nil
+  }
+
+  private static func displayIdentity(_ uid: String) -> UUID? {
+    let parts = uid.split(separator: "_", omittingEmptySubsequences: false)
+    guard parts.count == 1 || parts.count == 2 else { return nil }
+    if parts.count == 2 {
+      guard parts[1].utf8.count == 8,
+        parts[1].utf8.allSatisfy({
+          (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+        })
+      else { return nil }
+    }
+    return UUID(uuidString: String(parts[0]))
+  }
 }
 
 public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
@@ -270,7 +301,12 @@ public final class AudioDeviceMonitor: Sendable {
     return deviceIDs.compactMap { id in
       if !hasOutput(for: id) { return nil }
       guard let uid = uid(for: id) else { return nil }
-      return AudioDevice(id: id, uid: uid, name: name(for: id) ?? "Unknown")
+      return AudioDevice(
+        id: id,
+        uid: uid,
+        name: name(for: id) ?? "Unknown",
+        transportType: transportType(for: id)
+      )
     }
   }
 
@@ -281,7 +317,12 @@ public final class AudioDeviceMonitor: Sendable {
     )
     guard let id = ids.first, id != kAudioObjectUnknown else { return nil }
     guard let uid = uid(for: id) else { return nil }
-    return AudioDevice(id: id, uid: uid, name: name(for: id) ?? "Unknown")
+    return AudioDevice(
+      id: id,
+      uid: uid,
+      name: name(for: id) ?? "Unknown",
+      transportType: transportType(for: id)
+    )
   }
 
   public func audioDevice(withUid uid: String) -> AudioDevice? {
@@ -528,6 +569,11 @@ public final class AudioDeviceMonitor: Sendable {
   private func uid(for id: AudioDeviceID) -> String? {
     let uids = property(for: id, selector: kAudioDevicePropertyDeviceUID, type: CFString.self)
     return uids.first as String?
+  }
+
+  private func transportType(for id: AudioDeviceID) -> UInt32 {
+    property(for: id, selector: kAudioDevicePropertyTransportType, type: UInt32.self).first
+      ?? kAudioDeviceTransportTypeUnknown
   }
 
   private func hasOutput(for id: AudioDeviceID) -> Bool {

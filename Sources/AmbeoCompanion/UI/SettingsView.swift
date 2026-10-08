@@ -6,7 +6,7 @@ struct SettingsView: View {
   @Environment(AppModel.self) private var appModel
 
   /// Dynamic lists that are not persisted
-  @State private var availableAudioDevices: [AudioDevice] = []
+  private var availableAudioDevices: [AudioDevice] { appModel.availableAudioDevices }
   @State private var supportedFormats: [AudioPhysicalFormat] = []
 
   /// Picker writes `""` when the saved UID is missing from its tags (first frame, or the
@@ -223,7 +223,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.19"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.20"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)
@@ -233,14 +233,11 @@ struct SettingsView: View {
       .listRowBackground(Color.clear)
     }
     .formStyle(.grouped)
-    .task {
-      for await devices in AudioDeviceMonitor.shared.outputDevicesStream {
-        availableAudioDevices = devices
-        refreshFormats(
-          for: appModel.settings.audioDeviceUid,
-          current: appModel.settings.fallbackAudioFormatID
-        )
-      }
+    .onChange(of: availableAudioDevices, initial: true) { _, _ in
+      refreshFormats(
+        for: appModel.settings.audioDeviceUid,
+        current: appModel.settings.fallbackAudioFormatID
+      )
     }
   }
 
