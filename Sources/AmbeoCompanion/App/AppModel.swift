@@ -183,12 +183,16 @@ final class AppModel: Sendable {
       musicPlayer: MusicPlayerController.shared,
       isMutedProvider: { [weak self] in
         guard let self, let client = self.ambeoClient ?? self.disconnectingClient else {
-          return false
+          return nil
         }
-        return await client.state.isMuted
+        // getValue distinguishes an unavailable endpoint from AmbeoState's default false
+        // and retries the fetch if registration did not obtain a value.
+        return await client.getValue(for: AmbeoEndpoint.Player.Mute())
       },
       setMute: { [weak self] muted in
-        guard let self, let client = self.ambeoClient ?? self.disconnectingClient else { return }
+        guard let self, let client = self.ambeoClient ?? self.disconnectingClient else {
+          throw URLError(.notConnectedToInternet)
+        }
         try await client.set(
           AmbeoEndpoint.Player.Mute(),
           valueJSON: "{\"type\":\"bool_\",\"bool_\":\(muted)}"

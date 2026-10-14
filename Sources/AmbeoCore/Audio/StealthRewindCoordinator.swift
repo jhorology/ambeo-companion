@@ -19,13 +19,15 @@ public final class StealthRewindCoordinator {
     case idle
     case waitingForInitialLock
     case rewindingAndSettling
+    case finishing
   }
 
   public var settleDelay: Duration
   public var muteTimeout: Duration
 
   private let musicPlayer: any MusicPlayerControlling
-  private let isMutedProvider: @MainActor () async -> Bool
+  /// nil means the mute state has not been obtained; it must never clear pending recovery.
+  private let isMutedProvider: @MainActor () async -> Bool?
   private let setMute: @MainActor (Bool) async throws -> Void
   private let currentSoundbarFormatProvider: @MainActor () async -> AmbeoAudioFormat?
 
@@ -46,6 +48,7 @@ public final class StealthRewindCoordinator {
   private var rewindInstant: ContinuousClock.Instant?
   private var actionTask: Task<Void, Never>?
   private var timeoutTask: Task<Void, Never>?
+  private var finishingTask: Task<Void, Never>?
   private var clearOSDSuppressionTask: Task<Void, Never>?
   private var sessionWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -53,7 +56,7 @@ public final class StealthRewindCoordinator {
     settleDelay: Duration = StealthRewindCoordinator.defaultSettleDelay,
     muteTimeout: Duration = StealthRewindCoordinator.defaultMuteTimeout,
     musicPlayer: any MusicPlayerControlling = MusicPlayerController.shared,
-    isMutedProvider: @escaping @MainActor () async -> Bool,
+    isMutedProvider: @escaping @MainActor () async -> Bool?,
     setMute: @escaping @MainActor (Bool) async throws -> Void,
     currentSoundbarFormatProvider: @escaping @MainActor () async -> AmbeoAudioFormat?
   ) {
@@ -88,6 +91,12 @@ public final class StealthRewindCoordinator {
     isClientConnected: Bool
   ) async {
     guard let format else { return }
+    // Cleanup owns the mute until its RPC completes. Preserve the transition and process it
+    // afterwards rather than allowing an old unmute to affect a new session.
+    while phase == .finishing {
+      await waitForActiveSession()
+      guard !Task.isCancelled else { return }
+    }
     guard let previous = lastObservedFormat, previous.deviceID == deviceID else {
       lastObservedFormat = (deviceID: deviceID, format: format)
       return
@@ -134,8 +143,13 @@ public final class StealthRewindCoordinator {
     clearOSDSuppressionTask?.cancel()
     isSuppressingMuteOSD = true
 
-    let wasAlreadyMuted = await isMutedProvider()
-    guard isSessionActive, sessionID == currentID else { return }
+    let muteState = await isMutedProvider()
+    guard phase != .finishing, isSessionActive, sessionID == currentID else { return }
+    guard let wasAlreadyMuted = muteState else {
+      Logger.audio.warning("Stealth Rewind skipped: AMBEO mute state is unavailable.")
+      finishSession(id: currentID)
+      return
+    }
     // Keep a pending unmute from an earlier failed session: the soundbar may still be muted by us.
     needsUnmute = needsUnmute || !wasAlreadyMuted
 
@@ -162,14 +176,12 @@ public final class StealthRewindCoordinator {
         "Stealth Rewind [2/6]: Failed to mute AMBEO (\(error.localizedDescription)). Aborting."
       )
       // The request may still have reached the soundbar, so try to undo it.
-      guard isSessionActive, sessionID == currentID else { return }
-      phase = .idle
-      await unmuteIfNeeded(stepLabel: "2/6 failed")
-      finishSession(id: currentID)
+      guard phase != .finishing, isSessionActive, sessionID == currentID else { return }
+      await endSession(id: currentID, stepLabel: "2/6 failed")
       return
     }
 
-    guard isSessionActive, sessionID == currentID else { return }
+    guard phase != .finishing, isSessionActive, sessionID == currentID else { return }
 
     startTimeoutTask(for: currentID)
 
@@ -210,29 +222,15 @@ public final class StealthRewindCoordinator {
       await retryPendingUnmute(reason: reason)
       return
     }
-    let currentID = sessionID
-    actionTask?.cancel()
-    actionTask = nil
-    timeoutTask?.cancel()
-    timeoutTask = nil
-    // Leave the active phase now so a Step 2 that resumes after its mute lands stops there
-    // instead of starting the timeout or rewind.
-    phase = .idle
     Logger.audio.info("Stealth Rewind: Cancelling active session (\(reason), \(elapsedSummary())).")
-    await unmuteIfNeeded(stepLabel: "cancel:\(reason)")
-    finishSession(id: currentID)
+    await endSession(id: sessionID, stepLabel: "cancel:\(reason)")
   }
 
   /// Retries an unmute that failed in an earlier session. Call after the soundbar connection
   /// is re-established.
   public func retryPendingUnmute(reason: String) async {
     guard !isSessionActive, needsUnmute else { return }
-    guard await isMutedProvider() else {
-      needsUnmute = false
-      return
-    }
-    guard !isSessionActive, needsUnmute else { return }
-    await unmuteIfNeeded(stepLabel: "retry:\(reason)")
+    await endSession(id: sessionID, stepLabel: "retry:\(reason)", checkMuteState: true)
   }
 
   // MARK: - Private Steps 4–6 & Timeout
@@ -249,7 +247,7 @@ public final class StealthRewindCoordinator {
 
       // Step 4: Rewind Music.app to player position 0 while AMBEO is still muted
       let rewound = await self.musicPlayer.rewindToStart()
-      guard self.isSessionActive, self.sessionID == id else { return }
+      guard !Task.isCancelled, self.isSessionActive, self.sessionID == id else { return }
       self.rewindInstant = ContinuousClock.now
 
       Logger.audio.info(
@@ -274,10 +272,7 @@ public final class StealthRewindCoordinator {
 
   private func completeAndUnmute(for id: Int) async {
     guard isSessionActive, sessionID == id else { return }
-    timeoutTask?.cancel()
-    timeoutTask = nil
-    await unmuteIfNeeded(stepLabel: "6/6")
-    finishSession(id: id)
+    await endSession(id: id, stepLabel: "6/6")
   }
 
   private func startTimeoutTask(for id: Int) {
@@ -290,14 +285,46 @@ public final class StealthRewindCoordinator {
         return
       }
       guard let self, self.isSessionActive, self.sessionID == id else { return }
-      self.actionTask?.cancel()
-      self.actionTask = nil
       Logger.audio.warning(
         "Stealth Rewind: Mute timeout (\(timeout)) expired waiting for AMBEO format switch (\(self.elapsedSummary())). Unmuting AMBEO."
       )
-      await self.unmuteIfNeeded(stepLabel: "timeout")
+      await self.endSession(id: id, stepLabel: "timeout")
+    }
+  }
+
+  /// Serializes every cleanup path, including retries, in an independent task so cancellation
+  /// of the format observer or rewind task cannot cancel the recovery RPC.
+  private func endSession(id: Int, stepLabel: String, checkMuteState: Bool = false) async {
+    guard sessionID == id else { return }
+    if let finishingTask {
+      await finishingTask.value
+      return
+    }
+    phase = .finishing
+    actionTask?.cancel()
+    actionTask = nil
+    timeoutTask?.cancel()
+    timeoutTask = nil
+    let task = Task { @MainActor in
+      if checkMuteState {
+        switch await self.isMutedProvider() {
+        case nil:
+          // A disconnected client or failed read is not evidence of a successful unmute.
+          self.finishSession(id: id)
+          return
+        case false?:
+          self.needsUnmute = false
+          self.finishSession(id: id)
+          return
+        case true?:
+          break
+        }
+      }
+      await self.unmuteIfNeeded(stepLabel: stepLabel)
       self.finishSession(id: id)
     }
+    finishingTask = task
+    await task.value
   }
 
   private func unmuteIfNeeded(stepLabel: String) async {
@@ -332,6 +359,7 @@ public final class StealthRewindCoordinator {
     timeoutTask?.cancel()
     timeoutTask = nil
     phase = .idle
+    finishingTask = nil
 
     let waiters = sessionWaiters
     sessionWaiters.removeAll()

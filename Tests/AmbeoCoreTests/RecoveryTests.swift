@@ -81,7 +81,27 @@ private final class FailFirstHardwareProtocol: URLProtocol, @unchecked Sendable 
   override func stopLoading() {}
 }
 
+private final class UnavailableMuteProtocol: URLProtocol, @unchecked Sendable {
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+  }
+  override func stopLoading() {}
+}
+
 final class RecoveryTests: XCTestCase {
+  func testUnavailableMuteValueIsUnknownRatherThanDefaultFalse() async {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [UnavailableMuteProtocol.self]
+    let client = AmbeoClient(host: "test.local", configuration: config)
+    await client.register(AmbeoEndpoint.Player.Mute())
+    let cachedState = await client.state
+    XCTAssertFalse(cachedState.isMuted)
+    let muteValue = await client.getValue(for: AmbeoEndpoint.Player.Mute())
+    XCTAssertNil(muteValue)
+  }
+
   func testInitialFailureRecoversVolumeMetadata() async {
     await checkRecovery(array: false)
   }

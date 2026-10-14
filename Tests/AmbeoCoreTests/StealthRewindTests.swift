@@ -46,6 +46,39 @@ private func makePhysicalFormat(
   )
 }
 
+@MainActor
+private final class MuteRecoveryState {
+  var muted = false
+  var available = true
+  var failures = 0
+  var attempts = 0
+  var events: [Bool] = []
+  var pendingUnmute: CheckedContinuation<Void, Never>?
+  var blockUnmute = false
+  var repeatedCancelStarted = false
+
+  func setMute(_ value: Bool) async throws {
+    if !value {
+      attempts += 1
+      if failures > 0 {
+        failures -= 1
+        throw URLError(.timedOut)
+      }
+      if blockUnmute {
+        await withCheckedContinuation { pendingUnmute = $0 }
+      }
+    }
+    muted = value
+    events.append(value)
+  }
+
+  func releaseUnmute() {
+    blockUnmute = false
+    pendingUnmute?.resume()
+    pendingUnmute = nil
+  }
+}
+
 @Suite("Stealth Rewind Tests")
 struct StealthRewindTests {
   private static let stereoLPCM = makePhysicalFormat(
@@ -92,7 +125,7 @@ struct StealthRewindTests {
     let music = MockMusicPlayer()
     var events: [String] = []
     var isMuted = false
-    var soundbarFormat: AmbeoAudioFormat? = AmbeoAudioFormat(
+    let soundbarFormat: AmbeoAudioFormat? = AmbeoAudioFormat(
       codec: "pcm",
       channels: 2,
       sampleRate: 48_000
@@ -140,7 +173,6 @@ struct StealthRewindTests {
       channels: 12,
       sampleRate: 48_000
     )
-    soundbarFormat = atmosFormat
     coordinator.handleSoundbarFormatChange(atmosFormat)
 
     await coordinator.waitForActiveSession()
@@ -410,5 +442,179 @@ struct StealthRewindTests {
 
     await coordinator.retryPendingUnmute(reason: "client connected")
     #expect(!isMuted)
+  }
+
+  @Test("An unavailable mute state preserves recovery until a later successful read")
+  @MainActor
+  func unavailableMuteStatePreservesPendingUnmute() async {
+    let state = MuteRecoveryState()
+    state.failures = 1
+    let coordinator = StealthRewindCoordinator(
+      musicPlayer: MockMusicPlayer(),
+      isMutedProvider: { state.available ? state.muted : nil },
+      setMute: { try await state.setMute($0) },
+      currentSoundbarFormatProvider: { nil }
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.atmosEAC3,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.cancelAndUnmuteIfNeeded(reason: "connection lost")
+    #expect(state.muted)
+    #expect(state.attempts == 1)
+
+    state.available = false
+    await coordinator.retryPendingUnmute(reason: "mute fetch failed")
+    #expect(state.muted)
+    #expect(state.attempts == 1)
+    #expect(!coordinator.isSessionActive)
+
+    state.available = true
+    await coordinator.retryPendingUnmute(reason: "mute state recovered")
+    #expect(!state.muted)
+    #expect(state.attempts == 2)
+  }
+
+  @Test("An unavailable initial mute state never mutes the soundbar")
+  @MainActor
+  func unavailableInitialMuteStateSkipsSession() async {
+    let state = MuteRecoveryState()
+    let coordinator = StealthRewindCoordinator(
+      musicPlayer: MockMusicPlayer(),
+      isMutedProvider: { nil },
+      setMute: { try await state.setMute($0) },
+      currentSoundbarFormatProvider: { nil }
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.atmosEAC3,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    #expect(state.events.isEmpty)
+    #expect(!coordinator.isSessionActive)
+  }
+
+  @Test("A confirmed unmuted state clears recovery without changing a later user mute")
+  @MainActor
+  func confirmedUnmutedStateClearsRecovery() async {
+    let state = MuteRecoveryState()
+    state.failures = 1
+    let coordinator = StealthRewindCoordinator(
+      musicPlayer: MockMusicPlayer(),
+      isMutedProvider: { state.muted },
+      setMute: { try await state.setMute($0) },
+      currentSoundbarFormatProvider: { nil }
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.atmosEAC3,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.cancelAndUnmuteIfNeeded(reason: "connection lost")
+    state.muted = false
+    await coordinator.retryPendingUnmute(reason: "already unmuted")
+    #expect(state.attempts == 1)
+    state.muted = true
+    await coordinator.retryPendingUnmute(reason: "user muted later")
+    #expect(state.attempts == 1)
+    #expect(state.muted)
+  }
+
+  @Test(
+    "Cleanup finishes before the next transition and concurrent cancels share one unmute",
+    arguments: ["cancel", "complete", "timeout", "retry"]
+  )
+  @MainActor
+  func cleanupSerializesNextTransition(path: String) async {
+    let state = MuteRecoveryState()
+    let coordinator = StealthRewindCoordinator(
+      settleDelay: .zero,
+      muteTimeout: path == "timeout" ? .milliseconds(30) : .seconds(5),
+      musicPlayer: MockMusicPlayer(),
+      isMutedProvider: { state.muted },
+      setMute: { try await state.setMute($0) },
+      currentSoundbarFormatProvider: { nil }
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.atmosEAC3,
+      deviceID: 42,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    if path == "retry" {
+      state.failures = 1
+      await coordinator.cancelAndUnmuteIfNeeded(reason: "connection lost")
+    }
+    state.blockUnmute = true
+    let cleanup = Task { @MainActor in
+      switch path {
+      case "complete":
+        coordinator.handleSoundbarFormatChange(
+          AmbeoAudioFormat(codec: "Dolby Atmos", channels: 12, sampleRate: 48_000)
+        )
+        await coordinator.waitForActiveSession()
+      case "timeout":
+        await coordinator.waitForActiveSession()
+      case "retry":
+        await coordinator.retryPendingUnmute(reason: "client connected")
+      default:
+        await coordinator.cancelAndUnmuteIfNeeded(reason: "disabled")
+      }
+    }
+    while state.pendingUnmute == nil { await Task.yield() }
+    #expect(coordinator.isSessionActive)
+    let repeatedCancel = Task {
+      state.repeatedCancelStarted = true
+      await coordinator.cancelAndUnmuteIfNeeded(reason: "second cancel")
+    }
+    while !state.repeatedCancelStarted { await Task.yield() }
+    let nextTransition = Task {
+      await coordinator.handleCoreAudioFormatChange(
+        Self.stereoLPCM,
+        deviceID: 42,
+        isEnabled: true,
+        isClientConnected: true
+      )
+    }
+    await Task.yield()
+    #expect(state.events == [true])
+    state.releaseUnmute()
+    await cleanup.value
+    await repeatedCancel.value
+    await nextTransition.value
+    #expect(state.events == [true, false, true])
+    #expect(coordinator.isSessionActive)
+    #expect(state.muted)
+    await coordinator.cancelAndUnmuteIfNeeded(reason: "test cleanup")
+    #expect(state.events == [true, false, true, false])
+    #expect(!state.muted)
   }
 }

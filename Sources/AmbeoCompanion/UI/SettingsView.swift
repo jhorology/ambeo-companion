@@ -158,8 +158,7 @@ struct SettingsView: View {
                 get: { Double(model.settings.stealthRewindDelayMs) },
                 set: { model.settings.stealthRewindDelayMs = Int($0.rounded()) }
               ),
-              in: 0...600,
-              step: 25
+              in: 0...600
             )
             .frame(width: 150)
             Text("\(model.settings.stealthRewindDelayMs) ms")
@@ -255,7 +254,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.24"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.25"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)
