@@ -257,13 +257,12 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
       )
       return false
     case .notDetermined:
-      let prompted = await requestPermission()
-      guard prompted == .granted else {
-        Logger.audio.info(
-          "Stealth Rewind skipped: Music.app Automation permission not granted (\(String(describing: prompted)))."
-        )
-        return false
-      }
+      // Never prompt here: this runs mid format transition, and a consent dialog would stall the
+      // format handling until the user answers. The Permissions window requests access instead.
+      Logger.audio.info(
+        "Stealth Rewind skipped: Music.app Automation permission has not been requested yet."
+      )
+      return false
     case .granted:
       break
     }

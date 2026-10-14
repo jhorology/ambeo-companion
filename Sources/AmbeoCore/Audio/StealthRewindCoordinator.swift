@@ -36,7 +36,12 @@ public final class StealthRewindCoordinator {
   public private(set) var isSuppressingMuteOSD: Bool = false
 
   private var activeTargetIsAtmos: Bool = false
-  private var shouldUnmuteOnCompletion: Bool = false
+  /// Set before Step 2 is sent and cleared only after an unmute succeeds, so a failed unmute
+  /// can be retried after the session ends (e.g. once the client reconnects).
+  private var needsUnmute: Bool = false
+  /// The Step 2 mute request while it is in flight. Unmuting waits for it so a late-arriving
+  /// mute cannot land after the unmute.
+  private var inFlightMute: Task<Void, any Error>?
   private var sessionStartInstant: ContinuousClock.Instant?
   private var rewindInstant: ContinuousClock.Instant?
   private var actionTask: Task<Void, Never>?
@@ -131,7 +136,8 @@ public final class StealthRewindCoordinator {
 
     let wasAlreadyMuted = await isMutedProvider()
     guard isSessionActive, sessionID == currentID else { return }
-    shouldUnmuteOnCompletion = !wasAlreadyMuted
+    // Keep a pending unmute from an earlier failed session: the soundbar may still be muted by us.
+    needsUnmute = needsUnmute || !wasAlreadyMuted
 
     Logger.audio.info(
       "Stealth Rewind [1/6]: Detected Mac output format switch (\(previous.format.displayName) -> \(format.displayName)) while Music.app is playing."
@@ -139,8 +145,14 @@ public final class StealthRewindCoordinator {
 
     // Step 2: Mute AMBEO
     let muteStart = ContinuousClock.now
+    let setMute = self.setMute
+    let muteTask = Task { @MainActor in try await setMute(true) }
+    inFlightMute = muteTask
+    defer {
+      if inFlightMute == muteTask { inFlightMute = nil }
+    }
     do {
-      try await setMute(true)
+      try await muteTask.value
       let muteRpcMs = muteStart.duration(to: ContinuousClock.now).millisecondsString
       Logger.audio.info(
         "Stealth Rewind [2/6]: Muted AMBEO (wasAlreadyMuted=\(wasAlreadyMuted), rpc=\(muteRpcMs), \(elapsedSummary()), timeout=\(muteTimeout))."
@@ -149,7 +161,10 @@ public final class StealthRewindCoordinator {
       Logger.audio.warning(
         "Stealth Rewind [2/6]: Failed to mute AMBEO (\(error.localizedDescription)). Aborting."
       )
-      shouldUnmuteOnCompletion = false
+      // The request may still have reached the soundbar, so try to undo it.
+      guard isSessionActive, sessionID == currentID else { return }
+      phase = .idle
+      await unmuteIfNeeded(stepLabel: "2/6 failed")
       finishSession(id: currentID)
       return
     }
@@ -189,16 +204,35 @@ public final class StealthRewindCoordinator {
   }
 
   /// Cancels any active Stealth Rewind session and unmutes the soundbar if Stealth Rewind muted it.
+  /// With no active session, retries an unmute that failed earlier.
   public func cancelAndUnmuteIfNeeded(reason: String) async {
-    guard isSessionActive else { return }
+    guard isSessionActive else {
+      await retryPendingUnmute(reason: reason)
+      return
+    }
     let currentID = sessionID
     actionTask?.cancel()
     actionTask = nil
     timeoutTask?.cancel()
     timeoutTask = nil
+    // Leave the active phase now so a Step 2 that resumes after its mute lands stops there
+    // instead of starting the timeout or rewind.
+    phase = .idle
     Logger.audio.info("Stealth Rewind: Cancelling active session (\(reason), \(elapsedSummary())).")
     await unmuteIfNeeded(stepLabel: "cancel:\(reason)")
     finishSession(id: currentID)
+  }
+
+  /// Retries an unmute that failed in an earlier session. Call after the soundbar connection
+  /// is re-established.
+  public func retryPendingUnmute(reason: String) async {
+    guard !isSessionActive, needsUnmute else { return }
+    guard await isMutedProvider() else {
+      needsUnmute = false
+      return
+    }
+    guard !isSessionActive, needsUnmute else { return }
+    await unmuteIfNeeded(stepLabel: "retry:\(reason)")
   }
 
   // MARK: - Private Steps 4–6 & Timeout
@@ -267,23 +301,26 @@ public final class StealthRewindCoordinator {
   }
 
   private func unmuteIfNeeded(stepLabel: String) async {
-    guard shouldUnmuteOnCompletion else {
+    if let inFlightMute {
+      _ = try? await inFlightMute.value
+    }
+    guard needsUnmute else {
       Logger.audio.debug(
         "Stealth Rewind [\(stepLabel)]: Skipping unmute because AMBEO was already muted before transition."
       )
       return
     }
-    shouldUnmuteOnCompletion = false
     let unmuteStart = ContinuousClock.now
     do {
       try await setMute(false)
+      needsUnmute = false
       let unmuteRpcMs = unmuteStart.duration(to: ContinuousClock.now).millisecondsString
       Logger.audio.info(
         "Stealth Rewind [\(stepLabel)]: Unmuted AMBEO (rpc=\(unmuteRpcMs), \(elapsedSummary()))."
       )
     } catch {
       Logger.audio.warning(
-        "Stealth Rewind [\(stepLabel)]: Failed to unmute AMBEO (\(error.localizedDescription))."
+        "Stealth Rewind [\(stepLabel)]: Failed to unmute AMBEO (\(error.localizedDescription)). Will retry after reconnect."
       )
     }
   }
@@ -295,7 +332,6 @@ public final class StealthRewindCoordinator {
     timeoutTask?.cancel()
     timeoutTask = nil
     phase = .idle
-    shouldUnmuteOnCompletion = false
 
     let waiters = sessionWaiters
     sessionWaiters.removeAll()
@@ -342,8 +378,17 @@ extension AmbeoAudioFormat {
     return true
   }
 
+  /// Soundbar-side counterpart of `AudioPhysicalFormat.isAtmosOrMultichannel`: Atmos,
+  /// more than two channels (e.g. 8ch PCM), or a Dolby/DTS bitstream such as DD+ 5.1.
+  var isAtmosOrMultichannel: Bool {
+    if isAtmos || (channels ?? 0) > 2 { return true }
+    guard let codec else { return false }
+    return codec.localizedCaseInsensitiveContains("dolby")
+      || codec.localizedCaseInsensitiveContains("dts")
+  }
+
   func matchesTransitionTarget(isAtmosOrMultichannel: Bool) -> Bool {
     guard isLocked else { return false }
-    return isAtmos == isAtmosOrMultichannel
+    return self.isAtmosOrMultichannel == isAtmosOrMultichannel
   }
 }

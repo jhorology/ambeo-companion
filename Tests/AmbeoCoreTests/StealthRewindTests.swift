@@ -294,4 +294,121 @@ struct StealthRewindTests {
     #expect(!isMuted)
     #expect(events == ["mute(true)", "mute(false)"])
   }
+
+  @Test("Multichannel PCM and non-Atmos Dolby formats match the multichannel transition target")
+  func multichannelFormatsMatchTarget() {
+    let pcm8ch = AmbeoAudioFormat(codec: "pcm", channels: 8, sampleRate: 48_000)
+    #expect(pcm8ch.matchesTransitionTarget(isAtmosOrMultichannel: true))
+    #expect(!pcm8ch.matchesTransitionTarget(isAtmosOrMultichannel: false))
+
+    let ddp51 = AmbeoAudioFormat(codec: "Dolby Digital Plus", channels: 6, sampleRate: 48_000)
+    #expect(ddp51.matchesTransitionTarget(isAtmosOrMultichannel: true))
+
+    let ddp20 = AmbeoAudioFormat(codec: "Dolby Digital Plus", channels: 2, sampleRate: 48_000)
+    #expect(ddp20.matchesTransitionTarget(isAtmosOrMultichannel: true))
+
+    let pcm2ch = AmbeoAudioFormat(codec: "pcm", channels: 2, sampleRate: 48_000)
+    #expect(!pcm2ch.matchesTransitionTarget(isAtmosOrMultichannel: true))
+  }
+
+  @Test("Cancelling while the mute request is in flight leaves AMBEO unmuted")
+  @MainActor
+  func cancelDuringInFlightMuteUnmutesAfterMuteLands() async throws {
+    let music = MockMusicPlayer()
+    var events: [String] = []
+    var isMuted = false
+    var muteRequested = false
+
+    let coordinator = StealthRewindCoordinator(
+      settleDelay: .milliseconds(10),
+      muteTimeout: .milliseconds(100),
+      musicPlayer: music,
+      isMutedProvider: { isMuted },
+      setMute: { muted in
+        if muted {
+          // Simulate a slow mute RPC so the cancel's unmute would otherwise land first.
+          muteRequested = true
+          try await Task.sleep(for: .milliseconds(50))
+        }
+        isMuted = muted
+        events.append("mute(\(muted))")
+      },
+      currentSoundbarFormatProvider: { nil }
+    )
+
+    let deviceID: AudioDeviceID = 42
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: deviceID,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    let transition = Task { @MainActor in
+      await coordinator.handleCoreAudioFormatChange(
+        Self.atmosEAC3,
+        deviceID: deviceID,
+        isEnabled: true,
+        isClientConnected: true
+      )
+    }
+    while !muteRequested { await Task.yield() }
+
+    await coordinator.cancelAndUnmuteIfNeeded(reason: "disabled in settings")
+    await transition.value
+
+    #expect(!coordinator.isSessionActive)
+    #expect(!isMuted)
+    #expect(events == ["mute(true)", "mute(false)"])
+
+    // The resumed transition must not have armed a timeout or rewind.
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(events == ["mute(true)", "mute(false)"])
+    #expect(music.rewindCallCount == 0)
+  }
+
+  @Test("A failed unmute is kept and retried after reconnect")
+  @MainActor
+  func failedUnmuteIsRetried() async throws {
+    struct RPCError: Error {}
+    let music = MockMusicPlayer()
+    var isMuted = false
+    var unmuteFailures = 1
+
+    let coordinator = StealthRewindCoordinator(
+      settleDelay: .milliseconds(10),
+      muteTimeout: .seconds(1),
+      musicPlayer: music,
+      isMutedProvider: { isMuted },
+      setMute: { muted in
+        if !muted, unmuteFailures > 0 {
+          unmuteFailures -= 1
+          throw RPCError()
+        }
+        isMuted = muted
+      },
+      currentSoundbarFormatProvider: { nil }
+    )
+
+    let deviceID: AudioDeviceID = 42
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: deviceID,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    await coordinator.handleCoreAudioFormatChange(
+      Self.atmosEAC3,
+      deviceID: deviceID,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    #expect(isMuted)
+
+    await coordinator.cancelAndUnmuteIfNeeded(reason: "client reconnect")
+    #expect(!coordinator.isSessionActive)
+    #expect(isMuted)
+
+    await coordinator.retryPendingUnmute(reason: "client connected")
+    #expect(!isMuted)
+  }
 }

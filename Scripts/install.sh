@@ -43,7 +43,6 @@ BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${DEST}/Con
 echo "==> [3/4] Reset privacy grants for ${BUNDLE_ID}"
 # Clear the previous cdhash. A switch that still looks on is not valid after re-signing.
 tccutil reset Accessibility "$BUNDLE_ID" || echo "Warning: Failed to reset Accessibility permissions."
-tccutil reset ListenEvent "$BUNDLE_ID" || echo "Warning: Failed to reset Input Monitoring permissions."
 tccutil reset AppleEvents "$BUNDLE_ID" || echo "Warning: Failed to reset Automation permissions."
 
 echo "==> [4/4] Launch permission onboarding"

@@ -44,12 +44,6 @@ struct AppSettings: Codable {
 @Observable
 @MainActor
 final class AppModel: Sendable {
-  // MARK: - Stealth Rewind Configuration
-
-  /// Stealth RewindによるMute期間の最大タイムアウト時間。
-  /// 万が一AMBEO側のフォーマット切替通知が来なかった場合でも、この時間経過後に必ずMute解除します。
-  static let stealthRewindMuteTimeout: Duration = .seconds(5)
-
   static weak var runningInstance: AppModel?
   private let storageKey = "\(Bundle.id).Setting"
   private let hookedKeys: [SystemEvent.MediaKey] = [.soundUp, .soundDown, .mute]
@@ -185,7 +179,7 @@ final class AppModel: Sendable {
     Self.runningInstance = self
     stealthRewindCoordinator = StealthRewindCoordinator(
       settleDelay: .milliseconds(settings.stealthRewindDelayMs),
-      muteTimeout: Self.stealthRewindMuteTimeout,
+      muteTimeout: StealthRewindCoordinator.defaultMuteTimeout,
       musicPlayer: MusicPlayerController.shared,
       isMutedProvider: { [weak self] in
         guard let self, let client = self.ambeoClient ?? self.disconnectingClient else {
@@ -329,6 +323,10 @@ final class AppModel: Sendable {
         await client.stopObserving()
         return
       }
+
+      // An unmute that failed while the previous connection was down is retried here.
+      await self.stealthRewindCoordinator?.retryPendingUnmute(reason: "client connected")
+      guard generation == self.clientGeneration else { return }
 
       let initialState = await client.state
       let initialSoundbarAtmos = initialState.audioFormat?.isAtmos == true

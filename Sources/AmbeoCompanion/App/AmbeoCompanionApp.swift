@@ -166,12 +166,10 @@ struct AmbeoCompanionApp: App {
       }
     }
     .menuBarExtraStyle(.menu)
+    // Offer once per launch. The Music.app Automation status flips with Music.app launching and
+    // quitting, so re-arming on every change would reopen the window each time Music.app starts.
     .onChange(of: appModel.needsPermissionOnboarding, initial: true) { _, needed in
-      if !needed {
-        didOfferPermissionSetup = false
-        return
-      }
-      guard !didOfferPermissionSetup else { return }
+      guard needed, !didOfferPermissionSetup else { return }
       didOfferPermissionSetup = true
       openPermissionWindow()
     }
