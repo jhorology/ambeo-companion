@@ -19,6 +19,9 @@ It resolves volume adjustment limitations in macOS eARC / HDMI passthrough setup
   - Smoothly tracks the active screen in multi-monitor setups with fluid fade animations.
 - **Atmos Boost (Automatic Dolby Atmos Volume Compensation)**:
   - Automatically boosts playback volume by a configurable amount (0–40%) during Dolby Atmos playback, eliminating noticeable volume drops when switching between Dolby Atmos (Spatial Audio) and stereo PCM tracks in mixed playlists.
+- **Stealth Rewind (Experimental)**:
+  - Prevents the beginning of tracks in Apple Music (`Music.app`) from being cut off during HDMI/eARC physical format transitions (e.g., switching between Stereo PCM and Dolby Atmos).
+  - When a format change is detected while `Music.app` is playing, the app immediately mutes the AMBEO Soundbar, waits for the soundbar decoder to lock onto the new input format, rewinds `Music.app` to `0:00` via Automation, waits a configurable delay (`Stealth Rewind Delay`, default 250 ms) for pre-seek audio buffers to drain, and then unmutes (enforcing a 5-second safety timeout so the soundbar is never left muted).
 - **Fallback Audio Format Control**:
   - Automatically falls back to a designated format (e.g., 48 kHz 2ch) when Dolby Atmos is not playing, preventing macOS from defaulting to 192 kHz and causing unnecessary processing overhead or latency.
 - **Auto Standby Control & Automatic Sync (Fixes Idle Sleep Issues)**:
@@ -99,20 +102,21 @@ The following script handles building, signing, copying to `/Applications/AmbeoC
 Scripts/install.sh
 ```
 
-Capturing media keys requires both **Device Control and Data Access** (called **Accessibility** before macOS 27; active event tap to intercept and consume events) and **Input Monitoring** (observing keys). The script resets both TCC registrations and launches the app. Its Media Key Permissions window shows each permission status and opens the corresponding System Settings pane. Enable the switches manually; the app checks for changes and starts media key interception once both permissions are allowed. You can set up later and reopen the guide from the menu bar or check permissions in Settings.
+Capturing media keys requires both **Device Control and Data Access** (called **Accessibility** before macOS 27; active event tap to intercept and consume events) and **Input Monitoring** (observing keys). In addition, **Stealth Rewind** requires **Automation (`Music.app`)** permission. The script resets TCC registrations and launches the app. Its Permissions window shows each permission status and opens the corresponding System Settings pane. Enable the switches manually; the app checks for changes and activates each feature once its required permissions are allowed. You can set up later and reopen the guide from the menu bar or check permissions in Settings.
 
 ---
 
 ## Required Permissions & Security Settings
 
-Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed, and forwarded to the AMBEO Soundbar. This requires both of the following permissions:
+Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed, and forwarded to the AMBEO Soundbar. In addition, **Stealth Rewind** controls `Music.app` via AppleEvents:
 
 - **System Settings > Privacy & Security > Device Control and Data Access** (macOS 27+) or **Accessibility** (earlier macOS)
 - **System Settings > Privacy & Security > Input Monitoring**
+- **System Settings > Privacy & Security > Automation > Ambeo Companion > Music** (required when Stealth Rewind is enabled)
 
 If `AmbeoCompanion.app` is not listed, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on.
 
-Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset both registrations and launch permission onboarding. If media keys do not work, run the script or toggle the switches off and back on in each pane.
+Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset the TCC registrations and launch permission onboarding. If media keys or Stealth Rewind do not work, run the script or toggle the switches off and back on in each pane.
 
 ---
 

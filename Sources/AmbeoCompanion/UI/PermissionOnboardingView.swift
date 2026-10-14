@@ -6,10 +6,12 @@ struct PermissionOnboardingView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 20) {
-      Label("Set Up Media Keys", systemImage: "keyboard")
+      Label("Set Up Permissions", systemImage: "lock.shield")
         .font(.title2.bold())
-      Text("Allow these two permissions to control your AMBEO volume with your Mac's media keys.")
-        .foregroundStyle(.secondary)
+      Text(
+        "Allow these permissions to control your AMBEO volume with media keys and enable Stealth Rewind with Apple Music."
+      )
+      .foregroundStyle(.secondary)
       PermissionSettingsView()
       Text(
         "In System Settings > Privacy & Security, enable Ambeo Companion. If it is missing, use + to add this app from \(Bundle.main.bundlePath)."
@@ -26,7 +28,7 @@ struct PermissionOnboardingView: View {
           Task { await appModel.refreshMediaKeyPermissions() }
         }
         Spacer()
-        Button(appModel.mediaKeyPermissions.allGranted ? "Continue" : "Set Up Later") {
+        Button(!appModel.needsPermissionOnboarding ? "Continue" : "Set Up Later") {
           dismiss()
         }
         .keyboardShortcut(.defaultAction)
@@ -47,15 +49,20 @@ struct PermissionSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
           HStack {
             Label(
-              granted ? "Allowed" : "Permission Needed",
-              systemImage: granted ? "checkmark.circle.fill" : "exclamationmark.circle"
+              appModel.mediaKeyPermissions.statusLabel(for: permission),
+              systemImage: appModel.mediaKeyPermissions.statusSymbol(for: permission)
             )
             .font(.caption)
             .foregroundStyle(granted ? Color.green : Color.secondary)
             Spacer()
-            Button("Open Settings") { permission.requestAndOpenSettings() }
+            Button(appModel.mediaKeyPermissions.actionTitle(for: permission)) {
+              permission.requestAndOpenSettings {
+                await appModel.refreshMediaKeyPermissions()
+              }
+            }
           }
-          Text(permission.title).font(.headline)
+          Text(permission.title)
+            .font(.body)
           Text(permission.explanation)
             .font(.caption)
             .foregroundStyle(.secondary)

@@ -1,8 +1,9 @@
 #!/bin/bash
-# Build AmbeoCompanion, install it to /Applications, and re-register the two
+# Build AmbeoCompanion, install it to /Applications, and re-register the
 # privacy grants that an ad-hoc signature invalidates:
 #   - Accessibility — active CGEvent tap that consumes media keys
 #   - ListenEvent   — observing those keys
+#   - AppleEvents   — automating Music.app for Stealth Rewind
 #
 # macOS does not allow a script to turn the switches on. This resets the stale
 # TCC entries and launches the app's permission onboarding.
@@ -44,9 +45,10 @@ echo "==> [3/4] Reset privacy grants for ${BUNDLE_ID}"
 # Clear the previous cdhash. A switch that still looks on is not valid after re-signing.
 tccutil reset Accessibility "$BUNDLE_ID" || echo "Warning: Failed to reset Accessibility permissions."
 tccutil reset ListenEvent "$BUNDLE_ID" || echo "Warning: Failed to reset Input Monitoring permissions."
+tccutil reset AppleEvents "$BUNDLE_ID" || echo "Warning: Failed to reset Automation permissions."
 
 echo "==> [4/4] Launch permission onboarding"
 open "$DEST"
 echo
 echo "Installed: ${DEST}"
-echo "Use the app's Media Key Permissions window to enable both permissions."
+echo "Use the app's Permissions window to enable the required permissions."

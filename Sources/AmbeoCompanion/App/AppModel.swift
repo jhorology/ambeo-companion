@@ -13,12 +13,14 @@ struct AppSettings: Codable {
   /// Stored as the format's `displayName` (which equals its `id`)
   var fallbackAudioFormatID: String = ""
   var mediaKeyEnabled: Bool = true
+  var stealthRewindEnabled: Bool = false
+  var stealthRewindDelayMs: Int = 250
   var atmosBoostAmount: Double = 0
   var autoStandbySeconds: Int = 0
 
   enum CodingKeys: String, CodingKey {
-    case ambeoUid, audioDeviceUid, fallbackAudioFormatID, mediaKeyEnabled, atmosBoostAmount,
-      autoStandbySeconds
+    case ambeoUid, audioDeviceUid, fallbackAudioFormatID, mediaKeyEnabled, stealthRewindEnabled,
+      stealthRewindDelayMs, atmosBoostAmount, autoStandbySeconds
   }
 
   init() {}
@@ -30,6 +32,10 @@ struct AppSettings: Codable {
     fallbackAudioFormatID =
       try container.decodeIfPresent(String.self, forKey: .fallbackAudioFormatID) ?? ""
     mediaKeyEnabled = try container.decodeIfPresent(Bool.self, forKey: .mediaKeyEnabled) ?? true
+    stealthRewindEnabled =
+      try container.decodeIfPresent(Bool.self, forKey: .stealthRewindEnabled) ?? false
+    stealthRewindDelayMs =
+      try container.decodeIfPresent(Int.self, forKey: .stealthRewindDelayMs) ?? 250
     atmosBoostAmount = try container.decodeIfPresent(Double.self, forKey: .atmosBoostAmount) ?? 0
     autoStandbySeconds = try container.decodeIfPresent(Int.self, forKey: .autoStandbySeconds) ?? 0
   }
@@ -38,6 +44,12 @@ struct AppSettings: Codable {
 @Observable
 @MainActor
 final class AppModel: Sendable {
+  // MARK: - Stealth Rewind Configuration
+
+  /// Stealth RewindによるMute期間の最大タイムアウト時間。
+  /// 万が一AMBEO側のフォーマット切替通知が来なかった場合でも、この時間経過後に必ずMute解除します。
+  static let stealthRewindMuteTimeout: Duration = .seconds(5)
+
   static weak var runningInstance: AppModel?
   private let storageKey = "\(Bundle.id).Setting"
   private let hookedKeys: [SystemEvent.MediaKey] = [.soundUp, .soundDown, .mute]
@@ -52,9 +64,15 @@ final class AppModel: Sendable {
   private var monitoringSystemEventTask: Task<Void, Never>?
   private var monitoringPermissionsTask: Task<Void, Never>?
   private(set) var mediaKeyPermissions = MediaKeyPermissions.current()
+  private var stealthRewindCoordinator: StealthRewindCoordinator?
 
   var needsPermissionOnboarding: Bool {
-    settings.mediaKeyEnabled && !mediaKeyPermissions.allGranted
+    let mediaKeysNeeded = settings.mediaKeyEnabled && !mediaKeyPermissions.mediaKeysGranted
+    let musicAutomationNeeded =
+      settings.stealthRewindEnabled
+      && (mediaKeyPermissions.musicAutomation == .notDetermined
+        || mediaKeyPermissions.musicAutomation == .denied)
+    return mediaKeysNeeded || musicAutomationNeeded
   }
   private var clientTask: Task<Void, Never>?
   /// Debounced reconnect after the selected device's IP changed (see `debouncedReconnectIfIPChanged`).
@@ -90,6 +108,31 @@ final class AppModel: Sendable {
       if settings.mediaKeyEnabled != oldValue.mediaKeyEnabled {
         restartSystemEventMonitorIfNeeded()
       }
+      if settings.stealthRewindEnabled != oldValue.stealthRewindEnabled {
+        if settings.stealthRewindEnabled {
+          Task { [weak self] in
+            await self?.refreshMediaKeyPermissions()
+            guard let self else { return }
+            if self.mediaKeyPermissions.isGranted(.musicAutomation) {
+              MusicPlayerController.shared.refreshPlaybackStateInBackground()
+            } else {
+              MediaKeyPermission.musicAutomation.requestAndOpenSettings {
+                await self.refreshMediaKeyPermissions()
+                MusicPlayerController.shared.refreshPlaybackStateInBackground()
+              }
+            }
+          }
+        } else {
+          Task { [weak self] in
+            await self?.stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(
+              reason: "disabled in settings"
+            )
+          }
+        }
+      }
+      if settings.stealthRewindDelayMs != oldValue.stealthRewindDelayMs {
+        stealthRewindCoordinator?.settleDelay = .milliseconds(settings.stealthRewindDelayMs)
+      }
       if settings.atmosBoostAmount != oldValue.atmosBoostAmount {
         handleAtmosBoostAmountChanged(
           from: oldValue.atmosBoostAmount,
@@ -110,6 +153,7 @@ final class AppModel: Sendable {
   private(set) var currentAudioDevice: AudioDevice? = nil
   private(set) var availableAudioDevices: [AudioDevice] = []
   private(set) var ambeoClient: AmbeoClient? = nil
+  private var disconnectingClient: AmbeoClient? = nil
   /// Snapshot of the soundbar state for SwiftUI observers such as the menu bar. `nil` until the
   /// client finishes its initial sync.
   private(set) var soundbarState: AmbeoState? = nil
@@ -139,6 +183,29 @@ final class AppModel: Sendable {
       settings = AppSettings()
     }
     Self.runningInstance = self
+    stealthRewindCoordinator = StealthRewindCoordinator(
+      settleDelay: .milliseconds(settings.stealthRewindDelayMs),
+      muteTimeout: Self.stealthRewindMuteTimeout,
+      musicPlayer: MusicPlayerController.shared,
+      isMutedProvider: { [weak self] in
+        guard let self, let client = self.ambeoClient ?? self.disconnectingClient else {
+          return false
+        }
+        return await client.state.isMuted
+      },
+      setMute: { [weak self] muted in
+        guard let self, let client = self.ambeoClient ?? self.disconnectingClient else { return }
+        try await client.set(
+          AmbeoEndpoint.Player.Mute(),
+          valueJSON: "{\"type\":\"bool_\",\"bool_\":\(muted)}"
+        )
+        await self.refreshSoundbarState(from: client)
+      },
+      currentSoundbarFormatProvider: { [weak self] in
+        guard let self, let client = self.ambeoClient else { return nil }
+        return await client.state.audioFormat
+      }
+    )
     checkLaunchAtLoginStatus()
     startDiscoveringAmbeo()
     startMonitoringAudioDevice()
@@ -201,6 +268,7 @@ final class AppModel: Sendable {
     let previousTransition = atmosTransitionTask
 
     let previousClient = ambeoClient
+    disconnectingClient = previousClient
     ambeoClient = nil
     soundbarState = nil
 
@@ -215,8 +283,12 @@ final class AppModel: Sendable {
 
     clientTask = Task {
       await previousConnection?.value
+      await self.stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(reason: "client reconnect")
       await previousClient?.stopObserving()
       await previousTransition?.value
+      if self.disconnectingClient === previousClient {
+        self.disconnectingClient = nil
+      }
       guard !Task.isCancelled, generation == self.clientGeneration else { return }
       if uid != self.connectedUid, let previousClient {
         await self.revertOutstandingBoost(using: previousClient)
@@ -376,6 +448,7 @@ final class AppModel: Sendable {
     monitoringFormatTask?.cancel()
     monitoringFormatTask = nil
     monitoredFormatSource = nil
+    stealthRewindCoordinator?.resetObservedFormat()
   }
 
   private func startMonitoringFormat(for device: AudioDevice) {
@@ -391,6 +464,7 @@ final class AppModel: Sendable {
 
     monitoringFormatTask?.cancel()
     monitoredFormatSource = streamID.map { (device: device.id, stream: $0) }
+    stealthRewindCoordinator?.resetObservedFormat()
     monitoringFormatTask = Task {
       for await format in AudioDeviceMonitor.shared.formatStream(for: device.id) {
         Logger.audio.debug("Physical format changed: \(String(describing: format?.displayName))")
@@ -408,6 +482,15 @@ final class AppModel: Sendable {
 
     Logger.audio.info(
       "Audio format on [\(device.name)]: \(format?.displayName ?? "unknown") (formatID=\(format?.formatID ?? 0) '\(format?.fourCCString ?? "")', isAtmosOrMultichannel=\(isAtmos))"
+    )
+
+    // Step 1 & 2: Trigger Stealth Rewind before Atmos Boost so Mute is asserted immediately
+    // and Atmos Boost waits until Stealth Rewind completes before writing player:volume.
+    await self.stealthRewindCoordinator?.handleCoreAudioFormatChange(
+      format,
+      deviceID: device.id,
+      isEnabled: self.settings.stealthRewindEnabled,
+      isClientConnected: self.ambeoClient != nil
     )
 
     self.evaluateAtmosState(coreAudioAtmos: isAtmos)
@@ -441,6 +524,13 @@ final class AppModel: Sendable {
     guard current != mediaKeyPermissions else { return }
     mediaKeyPermissions = current
     restartSystemEventMonitorIfNeeded()
+    if current.musicAutomation == .granted {
+      MusicPlayerController.shared.refreshPlaybackStateInBackground()
+    } else if current.musicAutomation == .denied {
+      await stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(
+        reason: "Music.app Automation permission denied"
+      )
+    }
   }
 
   private func restartSystemEventMonitorIfNeeded() {
@@ -454,7 +544,9 @@ final class AppModel: Sendable {
   func startMonitoringSystemEvent() {
     monitoringSystemEventTask?.cancel()
     monitoringSystemEventTask = nil
-    guard !isShuttingDown, settings.mediaKeyEnabled, mediaKeyPermissions.allGranted else { return }
+    guard !isShuttingDown, settings.mediaKeyEnabled, mediaKeyPermissions.mediaKeysGranted else {
+      return
+    }
 
     // Capture current values so the Sendable closure doesn't need to touch self
     let audioDeviceUid = settings.audioDeviceUid
@@ -583,6 +675,7 @@ final class AppModel: Sendable {
         Logger.audio.debug(
           "Soundbar audio format: codec=\(fmt?.codec ?? "none"), channels=\(fmt?.channels ?? 0), isAtmos=\(soundbarAtmos)"
         )
+        self.stealthRewindCoordinator?.handleSoundbarFormatChange(fmt)
         self.evaluateAtmosState(soundbarAtmos: soundbarAtmos)
       }
 
@@ -614,7 +707,13 @@ final class AppModel: Sendable {
           activeAmbeoLevelPath,
         ]
 
-        if osdEligiblePaths.contains(path) {
+        if path == AmbeoEndpoint.Player.Mute().path,
+          self.stealthRewindCoordinator?.isSuppressingMuteOSD == true
+        {
+          Logger.lifecycle.debug(
+            "External change on [\(path)] suppressed while Stealth Rewind is active."
+          )
+        } else if osdEligiblePaths.contains(path) {
           Logger.lifecycle.debug("External change detected on [\(path)]. Displaying synced OSD.")
           self.lastOSDTask?.cancel()
           self.lastOSDTask = Task { @MainActor [weak self] in
@@ -703,6 +802,10 @@ final class AppModel: Sendable {
   }
 
   private func handleAtmosTransition(isAtmos: Bool) async {
+    // Writing `player:volume` on AMBEO hardware automatically unmutes the soundbar.
+    // Wait for any active Stealth Rewind session to complete before adjusting volume.
+    await stealthRewindCoordinator?.waitForActiveSession()
+
     // A later transition may have flipped the state while this one waited in the queue.
     guard !isShuttingDown, isAtmos == isAtmosActive, let client = ambeoClient else { return }
 
@@ -748,6 +851,7 @@ final class AppModel: Sendable {
     guard isAtmosActive else { return }
 
     enqueueAtmosWork { model in
+      await model.stealthRewindCoordinator?.waitForActiveSession()
       guard !model.isShuttingDown, model.isAtmosActive, let client = model.ambeoClient else {
         return
       }
@@ -799,6 +903,7 @@ final class AppModel: Sendable {
     monitoringOutputDevicesTask?.cancel()
     monitoringSystemEventTask?.cancel()
     atmosDeactivationTask?.cancel()
+    await stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(reason: "app termination")
     await atmosTransitionTask?.value
     if let client = ambeoClient {
       await revertOutstandingBoost(using: client)
@@ -840,6 +945,7 @@ final class AppModel: Sendable {
         self.ipChangeTask?.cancel()
         self.monitoringSystemEventTask?.cancel()
         self.clientTask?.cancel()
+        await self.stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(reason: "system sleep")
         // Let an in-flight apply/revert finish so appliedAtmosBoost matches the soundbar.
         await self.atmosTransitionTask?.value
         // Revert Atmos Boost before sleeping if active, so the soundbar doesn't stay boosted while sleeping

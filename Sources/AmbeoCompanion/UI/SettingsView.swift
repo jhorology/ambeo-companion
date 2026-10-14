@@ -138,6 +138,38 @@ struct SettingsView: View {
         }
 
         LabeledDescription(
+          title: "Stealth Rewind (Experimental)",
+          subtitle:
+            "Mute AMBEO during audio format switches and rewind Music.app to 0:00 once the soundbar locks onto the new input format."
+        ) {
+          Toggle("", isOn: $model.settings.stealthRewindEnabled)
+            .labelsHidden()
+            .toggleStyle(.switch)
+        }
+
+        LabeledDescription(
+          title: "Stealth Rewind Delay",
+          subtitle:
+            "Wait time before unmuting after rewinding to 0:00. Increase if a brief sound leaks before the track restarts; decrease if the beginning of the track is clipped."
+        ) {
+          HStack {
+            Slider(
+              value: Binding(
+                get: { Double(model.settings.stealthRewindDelayMs) },
+                set: { model.settings.stealthRewindDelayMs = Int($0.rounded()) }
+              ),
+              in: 0...600,
+              step: 25
+            )
+            .frame(width: 150)
+            Text("\(model.settings.stealthRewindDelayMs) ms")
+              .monospacedDigit()
+              .frame(width: 55, alignment: .trailing)
+          }
+          .disabled(!model.settings.stealthRewindEnabled)
+        }
+
+        LabeledDescription(
           title: "Atmos Boost",
           subtitle:
             "Volume offset automatically applied when switching between Dolby Atmos and stereo playback."
@@ -171,7 +203,7 @@ struct SettingsView: View {
         Text("Preferences")
       }
 
-      Section("Media Key Permissions") {
+      Section("Permissions") {
         PermissionSettingsView()
         Button("Check Permissions Again") {
           Task { await appModel.refreshMediaKeyPermissions() }
@@ -230,7 +262,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.21"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.22"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)

@@ -29,7 +29,12 @@ struct AmbeoCompanionApp: App {
   private func revertToAccessory() {
     guard
       !NSApp.windows.contains(where: {
-        $0.isVisible && ($0.title == "Settings" || $0.title == "Media Key Permissions")
+        $0.isVisible
+          && ($0.title == "Settings"
+            || $0.title == "Media Key Permissions"
+            || $0.title == "Permissions"
+            || $0.identifier?.rawValue == "settings-window"
+            || $0.identifier?.rawValue == "permissions-window")
       })
     else { return }
     NSApp.hide(nil)
@@ -163,7 +168,11 @@ struct AmbeoCompanionApp: App {
     }
     .menuBarExtraStyle(.menu)
     .onChange(of: appModel.needsPermissionOnboarding, initial: true) { _, needed in
-      guard needed, !didOfferPermissionSetup else { return }
+      if !needed {
+        didOfferPermissionSetup = false
+        return
+      }
+      guard !didOfferPermissionSetup else { return }
       didOfferPermissionSetup = true
       openPermissionWindow()
     }
