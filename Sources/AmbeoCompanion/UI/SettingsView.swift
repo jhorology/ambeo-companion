@@ -203,13 +203,6 @@ struct SettingsView: View {
         Text("Preferences")
       }
 
-      Section("Permissions") {
-        PermissionSettingsView()
-        Button("Check Permissions Again") {
-          Task { await appModel.refreshMediaKeyPermissions() }
-        }
-      }
-
       // --- Section 4: Shortcuts ---
       Section {
         LabeledDescription(

@@ -1,12 +1,10 @@
 import AmbeoCore
 import AppKit
 @preconcurrency import ApplicationServices
-import CoreGraphics
 
 /// UI names change in macOS 27; the underlying Accessibility API and pane anchor do not.
 enum MediaKeyPermission: CaseIterable, Identifiable {
   case accessibility
-  case inputMonitoring
   case musicAutomation
 
   var id: Self { self }
@@ -16,8 +14,6 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
     case .accessibility:
       if #available(macOS 27, *) { return "Device Control and Data Access" }
       return "Accessibility"
-    case .inputMonitoring:
-      return "Input Monitoring"
     case .musicAutomation:
       return "Automation (Music.app)"
     }
@@ -28,8 +24,6 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
     case .accessibility:
       return
         "Lets Ambeo Companion intercept volume and mute keys and prevent macOS from handling them twice."
-    case .inputMonitoring:
-      return "Lets Ambeo Companion receive media keys while you use other apps."
     case .musicAutomation:
       return
         "Lets Ambeo Companion detect Apple Music playback and rewind tracks to 0:00 after an audio format switch (Stealth Rewind)."
@@ -40,8 +34,6 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
     switch self {
     case .accessibility:
       return AXIsProcessTrusted()
-    case .inputMonitoring:
-      return CGPreflightListenEventAccess()
     case .musicAutomation:
       return MusicPlayerController.shared.permissionStatus(askUserIfNeeded: false).isGranted
     }
@@ -51,27 +43,16 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
   func requestAndOpenSettings(onComplete: (@MainActor @Sendable () async -> Void)? = nil) {
     switch self {
     case .accessibility:
-      if !isGranted {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-      }
       Self.openSystemSettings(anchor: "Privacy_Accessibility")
-
-    case .inputMonitoring:
-      if !isGranted {
-        _ = CGRequestListenEventAccess()
-      }
-      Self.openSystemSettings(anchor: "Privacy_ListenEvent")
 
     case .musicAutomation:
       Task { @MainActor in
+        let wasAlreadyGranted = isGranted
         let launched = await MusicPlayerController.shared.ensureMusicRunningForPermissionPrompt()
         if launched {
-          let status = await Task.detached(priority: .userInitiated) {
-            MusicPlayerController.shared.permissionStatus(askUserIfNeeded: true)
-          }.value
+          let status = await MusicPlayerController.shared.requestPermission()
           await onComplete?()
-          if status != .granted {
+          if wasAlreadyGranted || status != .granted {
             Self.openSystemSettings(anchor: "Privacy_Automation")
           }
         } else {
@@ -98,26 +79,24 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
 
 struct MediaKeyPermissions: Equatable {
   var accessibility: Bool
-  var inputMonitoring: Bool
   var musicAutomation: MusicAutomationPermissionStatus
 
-  var mediaKeysGranted: Bool { accessibility && inputMonitoring }
+  var mediaKeysGranted: Bool { accessibility }
 
   var allGranted: Bool {
-    accessibility && inputMonitoring && musicAutomation == .granted
+    accessibility && musicAutomation == .granted
   }
 
   func isGranted(_ permission: MediaKeyPermission) -> Bool {
     switch permission {
     case .accessibility: return accessibility
-    case .inputMonitoring: return inputMonitoring
     case .musicAutomation: return musicAutomation == .granted
     }
   }
 
   func statusLabel(for permission: MediaKeyPermission) -> String {
     switch permission {
-    case .accessibility, .inputMonitoring:
+    case .accessibility:
       return isGranted(permission) ? "Allowed" : "Permission Needed"
     case .musicAutomation:
       switch musicAutomation {
@@ -133,7 +112,7 @@ struct MediaKeyPermissions: Equatable {
 
   func statusSymbol(for permission: MediaKeyPermission) -> String {
     switch permission {
-    case .accessibility, .inputMonitoring:
+    case .accessibility:
       return isGranted(permission) ? "checkmark.circle.fill" : "exclamationmark.circle"
     case .musicAutomation:
       switch musicAutomation {
@@ -149,7 +128,7 @@ struct MediaKeyPermissions: Equatable {
 
   func actionTitle(for permission: MediaKeyPermission) -> String {
     switch permission {
-    case .accessibility, .inputMonitoring:
+    case .accessibility:
       return "Open Settings"
     case .musicAutomation:
       switch musicAutomation {
@@ -164,7 +143,6 @@ struct MediaKeyPermissions: Equatable {
   static func current() -> Self {
     Self(
       accessibility: MediaKeyPermission.accessibility.isGranted,
-      inputMonitoring: MediaKeyPermission.inputMonitoring.isGranted,
       musicAutomation: MusicPlayerController.shared.permissionStatus(askUserIfNeeded: false)
     )
   }

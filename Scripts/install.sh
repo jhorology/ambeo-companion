@@ -2,7 +2,6 @@
 # Build AmbeoCompanion, install it to /Applications, and re-register the
 # privacy grants that an ad-hoc signature invalidates:
 #   - Accessibility — active CGEvent tap that consumes media keys
-#   - ListenEvent   — observing those keys
 #   - AppleEvents   — automating Music.app for Stealth Rewind
 #
 # macOS does not allow a script to turn the switches on. This resets the stale

@@ -144,6 +144,11 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
       typeWildCard,
       askUserIfNeeded
     )
+    if askUserIfNeeded {
+      Logger.audio.info(
+        "MusicPlayerController: AEDeterminePermissionToAutomateTarget(askUserIfNeeded: true) returned status=\(status)"
+      )
+    }
     switch status {
     case noErr:
       return .granted
@@ -156,6 +161,43 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     default:
       Logger.audio.debug("AEDeterminePermissionToAutomateTarget returned status=\(status)")
       return .denied
+    }
+  }
+
+  /// Requests Automation permission for `Music.app`, falling back to executing a lightweight
+  /// read-only AppleEvent if `AEDeterminePermissionToAutomateTarget` does not resolve the state.
+  public func requestPermission() async -> MusicAutomationPermissionStatus {
+    guard isRunning() else {
+      return .musicNotRunning
+    }
+    let status = await Task.detached(priority: .userInitiated) {
+      self.permissionStatus(askUserIfNeeded: true)
+    }.value
+    if status == .granted {
+      refreshPlaybackStateInBackground()
+      return .granted
+    }
+
+    return await withCheckedContinuation { continuation in
+      scriptQueue.async { [weak self] in
+        guard let self, self.isRunning() else {
+          continuation.resume(returning: .musicNotRunning)
+          return
+        }
+        let playing = self.executeScriptOnQueue(
+          &self.compiledIsPlayingScript,
+          source: Self.isPlayingScriptSource,
+          action: "request Automation permission"
+        )
+        let updatedStatus = self.permissionStatus(askUserIfNeeded: false)
+        if updatedStatus == .granted {
+          self.cachedIsPlaying.withLock { $0 = playing }
+        }
+        Logger.audio.info(
+          "MusicPlayerController: Automation permission request finished with status=\(String(describing: updatedStatus))"
+        )
+        continuation.resume(returning: updatedStatus)
+      }
     }
   }
 
@@ -215,9 +257,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
       )
       return false
     case .notDetermined:
-      let prompted = await Task.detached(priority: .userInitiated) {
-        self.permissionStatus(askUserIfNeeded: true)
-      }.value
+      let prompted = await requestPermission()
       guard prompted == .granted else {
         Logger.audio.info(
           "Stealth Rewind skipped: Music.app Automation permission not granted (\(String(describing: prompted)))."

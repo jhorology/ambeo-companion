@@ -102,7 +102,7 @@ The following script handles building, signing, copying to `/Applications/AmbeoC
 Scripts/install.sh
 ```
 
-Capturing media keys requires both **Device Control and Data Access** (called **Accessibility** before macOS 27; active event tap to intercept and consume events) and **Input Monitoring** (observing keys). In addition, **Stealth Rewind** requires **Automation (`Music.app`)** permission. The script resets TCC registrations and launches the app. Its Permissions window shows each permission status and opens the corresponding System Settings pane. Enable the switches manually; the app checks for changes and activates each feature once its required permissions are allowed. You can set up later and reopen the guide from the menu bar or check permissions in Settings.
+Capturing media keys requires **Device Control and Data Access** (called **Accessibility** before macOS 27; active event tap to intercept and consume events). In addition, **Stealth Rewind** requires **Automation (`Music.app`)** permission. The script resets TCC registrations and launches the app. Its Permissions window shows each permission status and opens the corresponding System Settings pane. Enable the switches manually; the app checks for changes and activates each feature once its required permissions are allowed. You can set up later and reopen the Permissions window from the menu bar.
 
 ---
 
@@ -111,10 +111,9 @@ Capturing media keys requires both **Device Control and Data Access** (called **
 Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed, and forwarded to the AMBEO Soundbar. In addition, **Stealth Rewind** controls `Music.app` via AppleEvents:
 
 - **System Settings > Privacy & Security > Device Control and Data Access** (macOS 27+) or **Accessibility** (earlier macOS)
-- **System Settings > Privacy & Security > Input Monitoring**
 - **System Settings > Privacy & Security > Automation > Ambeo Companion > Music** (required when Stealth Rewind is enabled)
 
-If `AmbeoCompanion.app` is not listed, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on.
+If `AmbeoCompanion.app` is not listed under Device Control and Data Access / Accessibility, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on. For Automation, click **Allow Access** in the app's Permissions window to trigger the macOS consent prompt.
 
 Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset the TCC registrations and launch permission onboarding. If media keys or Stealth Rewind do not work, run the script or toggle the switches off and back on in each pane.
 

@@ -162,7 +162,7 @@ public struct SystemEventMonitor {
       // destruction. A TCC/WindowServer stall must not block the UI actor.
       let thread = Thread {
         defer { continuation.finish() }
-        guard !context.isStopped, AXIsProcessTrusted(), CGPreflightListenEventAccess() else {
+        guard !context.isStopped, AXIsProcessTrusted() else {
           return
         }
         let bridge = Unmanaged.passRetained(context).toOpaque()
@@ -191,7 +191,7 @@ public struct SystemEventMonitor {
         // Revocation can occur without a tap-disabled callback. Check here rather
         // than waiting for the UI's permission poll or the next media key.
         while !context.isStopped {
-          guard AXIsProcessTrusted(), CGPreflightListenEventAccess() else {
+          guard AXIsProcessTrusted() else {
             context.stop()
             break
           }

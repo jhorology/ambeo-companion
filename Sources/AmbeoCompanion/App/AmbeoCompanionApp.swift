@@ -31,7 +31,6 @@ struct AmbeoCompanionApp: App {
       !NSApp.windows.contains(where: {
         $0.isVisible
           && ($0.title == "Settings"
-            || $0.title == "Media Key Permissions"
             || $0.title == "Permissions"
             || $0.identifier?.rawValue == "settings-window"
             || $0.identifier?.rawValue == "permissions-window")
@@ -149,7 +148,7 @@ struct AmbeoCompanionApp: App {
         }
         .disabled(appModel.ambeoClient == nil)
 
-        Button("Media Key Permissions...", systemImage: "lock.shield") {
+        Button("Permissions...", systemImage: "lock.shield") {
           openPermissionWindow()
         }
 
@@ -203,7 +202,7 @@ struct AmbeoCompanionApp: App {
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 450, height: 500)
 
-    Window("Media Key Permissions", id: "permissions-window") {
+    Window("Permissions", id: "permissions-window") {
       PermissionOnboardingView()
         .environment(appModel)
         .onDisappear { revertToAccessory() }

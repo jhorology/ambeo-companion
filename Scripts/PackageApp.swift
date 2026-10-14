@@ -5,6 +5,7 @@ let appName = "AmbeoCompanion"
 let buildDir = ".build/release"
 let appBundle = "\(appName).app"
 let infoPlistSrc = "Sources/\(appName)/Info.plist"
+let entitlementsSrc = "Sources/\(appName)/\(appName).entitlements"
 let srcResources = "Sources/\(appName)/Resources"
 
 let fm = FileManager.default
@@ -90,8 +91,11 @@ if let resItems = try? fm.contentsOfDirectory(atPath: resPath) {
     shell("codesign", "--force", "--options", "runtime", "--sign", "-", "\(resPath)/\(item)")
   }
 }
-// Sign the main app bundle
-shell("codesign", "--force", "--options", "runtime", "--sign", "-", appBundle)
+// Sign the main app bundle with Automation entitlement required by Hardened Runtime
+shell(
+  "codesign", "--force", "--options", "runtime", "--entitlements", entitlementsSrc, "--sign", "-",
+  appBundle
+)
 
 print("\n✅ Successfully created \(appBundle)!")
 print("👉 Run with: open \(appBundle)")

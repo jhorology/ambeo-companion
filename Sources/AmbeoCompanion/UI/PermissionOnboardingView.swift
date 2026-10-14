@@ -48,25 +48,28 @@ struct PermissionSettingsView: View {
         let granted = appModel.mediaKeyPermissions.isGranted(permission)
         VStack(alignment: .leading, spacing: 6) {
           HStack {
+            Text(permission.title)
+              .font(.body.weight(.medium))
+            Spacer()
             Label(
               appModel.mediaKeyPermissions.statusLabel(for: permission),
               systemImage: appModel.mediaKeyPermissions.statusSymbol(for: permission)
             )
             .font(.caption)
             .foregroundStyle(granted ? Color.green : Color.secondary)
-            Spacer()
+          }
+          HStack(alignment: .center, spacing: 16) {
+            Text(permission.explanation)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
             Button(appModel.mediaKeyPermissions.actionTitle(for: permission)) {
               permission.requestAndOpenSettings {
                 await appModel.refreshMediaKeyPermissions()
               }
             }
           }
-          Text(permission.title)
-            .font(.body)
-          Text(permission.explanation)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
         }
       }
     }

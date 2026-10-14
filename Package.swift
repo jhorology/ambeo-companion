@@ -31,7 +31,7 @@ let package = Package(
         .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
       ],
       path: "Sources/AmbeoCompanion",
-      exclude: ["Info.plist", "Resources"]
+      exclude: ["Info.plist", "AmbeoCompanion.entitlements", "Resources"]
     ),
     .executableTarget(
       name: "DiscoverAmbeo",
