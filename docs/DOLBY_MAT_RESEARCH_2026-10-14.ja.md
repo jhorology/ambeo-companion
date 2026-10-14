@@ -6,11 +6,11 @@
 
 Ambeo Companionの将来機能として、macOSの通常音声・通知音・Atmos再生を、Apple TV実機のように常時Dolby MAT接続で出力できるかを調べた。
 
-**現時点で、再現性のある公開ハックや、Macの通常PCMをMAT 2.xへ変換できる利用可能な入口は特定できていない。** ただし、接続先のEDIDとmacOSのHDMI音声ドライバにはMAT対応の手掛かりがある。ハードウェア的に不可能とは判断できない。
+**再現性のある公開ハックや、Macの通常PCMをMAT 2.xへ変換できる利用可能な入口は存在しないことを確認した。** 接続先のEDIDとmacOSのHDMI音声ドライバ（`DCPAVAudioDriver`）にはMAT 2.1出力経路があり、`AudioToolboxCore` にもMATエンコーダ用のラッパー分岐が残っているが、**肝心のMATエンコーダコンポーネント（`aenc`）自体がmacOSには同梱されていない**。
 
-今回のMusic.app／TV.appのAtmos再生は、E-AC-3 Atmosのパススルーだった。MAT系形式は対応一覧に存在するが、実際に選択・送信された記録はない。
+今回のMusic.app／TV.appのAtmos再生は、E-AC-3 Atmosのパススルーだった。MAT系形式はドライバの対応一覧に存在するが、実際に選択・送信された記録はない。
 
-追加調査は「macOS内に呼び出せるMAT生成処理が存在するか」に半日〜1日程度絞る価値がある。自前MATエンコーダ開発やtvOSバイナリ移植が必要になる場合、アプリの追加機能としては負担が大きく、一旦保留が妥当と評価した。
+追加調査として実施した `dyld_shared_cache_arm64e` 全量・`coreaudiod`・全AudioComponent・`kernelcache`／`DCP.img4` の横断解析により、macOS標準バイナリ内に呼び出し可能なMAT生成処理が存在しないことが確定した。自前MATエンコーダ開発やtvOSバイナリ移植が必要になるため、Ambeo Companionの追加機能としては負担が大きく、**本機能は見送り（保留）**とする。
 
 ## 調査環境・操作範囲
 
@@ -21,9 +21,9 @@ Ambeo Companionの将来機能として、macOSの通常音声・通知音・Atm
 - 対象アプリ: Music.app、TV.app。
 - 想定接続: Mac → AW3225QF → eARC → AMBEO。今回、受信側AMBEOの実コーデックは照合していない。
 - アプリの再生／ポーズ、音声選択、パススルー設定変更はユーザーが実施。
-- 調査側はIORegistry・CoreAudio・ログ・登録情報・バイナリを読み取り、使い捨てのSwiftプローブでコーデック／変換器を作成・破棄した。
+- 調査側はIORegistry・CoreAudio・ログ・登録情報・バイナリ（`AudioCodecs`、`coreaudiod`、HALプラグイン、`dyld_shared_cache_arm64e` 全スライス、Preboot内の `kernelcache` および `DCP.img4`）を読み取り、使い捨てのSwiftプローブでコーデック／変換器を作成・破棄した。
 - HDMI形式変更、排他取得、音声送信、再生中プロセスの改変、システムバイナリの改変は実施していない。
-- 原ログの全量は保存していない。この文書のログ抜粋と数値は、セッション中に取得したツール出力に基づく。メモリアドレス等は省略した。
+- 原ログの全量は保存していない。この文書のログ抜粋と数値は、セッション中に取得したツール出力に基づく。
 
 ## 用語の整理
 
@@ -116,7 +116,7 @@ DCPAVAudioInterfaceProxy
 | `mtc+` | 768000 | 61440 | 15360 | 4 |
 | `cec3` / `cc+3` / `cd+3` | 192000等 | 24576 | 6144 | 4 |
 
-各形式は2ch・16bit、ドライバ側のformat flagsは76。`mtct`／`mtc+`は本アプリがMAT系として扱う非公開FourCCであり、今回のSDKに公開されたMAT定数や正式名称を確認できたわけではない。
+各形式は2ch・16bit、ドライバ側のformat flagsは76。公開SDKヘッダには `mtct`／`mtc+` の定数定義はないが、後述の `kernelcache` 解析により、`mtct` は `Dolby TrueHD (MAT2.1)`、`mtc+` は `Dolby Atmos (MAT2.1)` に対応するApple内部FourCCであることが特定できた。
 
 `kAudioStreamPropertyPhysicalFormat`は `AudioObjectIsPropertySettable` で書き込み可能と報告された。しかし、個々の形式への変更成功・データ送信・受信成功は未検証。書き込み可能フラグだけで送信できるとは判断しない。
 
@@ -215,6 +215,55 @@ TVのログでも、そのAtmos入力に対する出力候補5種類はすべて
 
 **この分岐はMAT生成を有効化するスイッチとは確認できていない。** 内部の16ch形式はそのままMATを意味しない。値を強制変更する実験は行っていない。
 
+## カーネル（`kernelcache`／`DCP.img4`）と全システム領域の横断調査
+
+`AudioCodecs.component` 以外の領域にMAT生成器が存在するか、またドライバ側で `mtct`／`mtc+` がどう扱われているかを確定させるため、Preboot内の `kernelcache`・`DCP.img4` および `dyld_shared_cache_arm64e` 全スライス（約5 GB）・`/usr/sbin/coreaudiod`・他AudioComponent（`AudioDSP.component`、`CoreAudio.component`）・HALプラグインを横断調査した（すべてメモリ上でのLZFSE展開および読み取り解析のみ）。
+
+### 1. `kernelcache`／`DCP.img4` におけるFourCCとリンク形式の完全対応
+
+`kernelcache` 内のフォーマット変換関数（`0x39cd584`／`0x39cda64`／`0x39cdaa4`）と文字列テーブル（`0xa455fd`）・FourCCテーブル（`0xa55578`）から、DCPドライバにおける内部フォーマットID・`StartLink` 表示名・CoreAudio FourCC・パケット長の対応が完全に判明した。
+
+| DCP Format ID | `StartLink` 時の `Format` 表示名 (`0xa455fd`) | CoreAudio FourCC (`0xa55578`) | 旧テーブル (`0xa555c8`) | パケット長 (`0x39cdaa4`) |
+|---:|---|---|---|---:|
+| 1 (`0x01`) | `LinearPCM` | `lpcm` | `lpcm` | 1 frames/pkt |
+| 2 (`0x02`) | `AC3` | `cac3` | `eAC3` | 1,536 frames/pkt |
+| 3〜6 (`0x03`〜`0x06`) | `MPEG1` / `MP3` / `MPEG2` / `AAC` | `.mp1` / `.mp3` / `aac ` | `none` | 1 frames/pkt |
+| 7〜12 (`0x07`〜`0x0c`) | `DTS` / `ATRAC` / `OneBitAudio` / `DTSHD` / `DST` / `WMAPro` | `0x00000000` | `none` | - |
+| 13 (`0x0d`) | `EAC3` | `cec3` | `cec3` | 6,144 frames/pkt |
+| 14 (`0x0e`) | `Dolby Atmos (EAC3)` | `cc+3` | `cc+3` | 6,144 frames/pkt |
+| 15 (`0x0f`) | `Dolby Atmos (EAC3 7.1)` | `cd+3` | `cc71` | 6,144 frames/pkt |
+| 16 (`0x10`) | `Dolby TrueHD (MAT1.0)` | `mtat` | `mtat` | 15,360 frames/pkt |
+| 17 (`0x11`) | `Dolby TrueHD (MAT2.0)` | `mtbt` | `mtbt` | 15,360 frames/pkt |
+| 18 (`0x12`) | `Dolby Atmos (MAT2.0)` | `mtb+` | `mtb+` | 15,360 frames/pkt |
+| 19 (`0x13`) | **`Dolby TrueHD (MAT2.1)`** | **`mtct`** | `mtct` | 15,360 frames/pkt |
+| 20 (`0x14`) | **`Dolby Atmos (MAT2.1)`** | **`mtc+`** | `mtc+` | 15,360 frames/pkt |
+
+- **FourCCの命名規則**: 3文字目の `a`／`b`／`c` が **MAT 1.0／2.0／2.1** を示し、4文字目の `t` が **TrueHD**、`+` が **Dolby Atmos（PCM＋メタデータ等）** を示す。
+- **ドライバ側の処理内容（`0x39cd708`〜`0x39cd7b8`）**:
+  - ID 2（`cac3`）および ID 13〜20（`cec3`〜`mtc+`）はすべて同一のIEC 61937圧縮伝送経路（2ch・16bit固定、サンプルレートのみストリーム記述から取得）として処理される。
+  - カーネルやDCPファームウェア内にPCMをMATへエンコードする処理はなく、ホスト（ユーザー空間）からすでにIEC 61937フレーミング済みのMAT 2.1パケット（61,440 bytes/packet）がDMA供給される前提となっている。
+
+### 2. ユーザー空間（`dyld_shared_cache_arm64e`・デーモン等）の横断スキャン結果
+
+データ定数およびARM64の即値ロード命令（`movz`＋`movk` ペア）で `mtct`、`mtc+`、`mtbt`、`mtb+`、`mat+` を全件探索した結果、ユーザー空間での参照は以下の箇所に限定されていた。
+
+1. **`AudioToolboxCore.framework`**
+   - 関数: `acv2::CodecEncoderFactory::BuildCodecConverterChain`（`0x18373ca8c + 744`、ソース名 `CodecConverterFactory.cpp`）
+   - 出力形式 `mFormatID` に対し `(mFormatID & 0xfffffeff) == 'mtb+'`（1bit差の `'mtb+'` と `'mtc+'` の双方に一致）を判定し、一致する場合はエンコーダ側の伝送チャンネル数（2ch）に合わせて入力LPCMの `mBytesPerFrame`／`mBytesPerPacket` を再計算する処理をスキップする特別分岐が存在する。
+   - ただし、これは「`mtb+`／`mtc+` に対応する `aenc`（AudioEncoderコンポーネント）が存在する場合に変換チェーンを構築する」ためのフレームワーク側の受け皿であり、**肝心の `mtb+`／`mtc+` 用 `aenc` コンポーネントがmacOSには登録・同梱されていない**ため、`AudioConverterNew` は `+168` で `'fmt?'`（`1718449215`）を返す。
+2. **`AudioToolbox.framework`**
+   - `__AUTH_CONST`（`0x1e98c7770`〜`0x1e98c78d0`）の既知フォーマット定義表には `cac3`／`ac-3`、`cec3`／`ec-3`、`cc+3`／`ec+3`（および `pc+3`／`qc+3`／`zc+3`）までしか含まれておらず、`mtb+`／`mtc+`／`mtct` は除外されている（`AudioFormatGetProperty(FormatName)` が `fmt?` を返す原因）。
+3. **`AudioServerDriver.framework`**
+   - `-[ASDDSPGraphFormatConverter_v2 allocateStreamingResourcesWithConfiguration:]`（`0x1c95a36cc`）にて `(mFormatID & 0xfffffeff) == 'mtb+'` を `lpcm` と並べてストリーム形式の整合チェックに使用しているのみ。
+4. **`MediaPlaybackCore.framework`／`AccessibilityUtilities.framework`**
+   - `MediaPlaybackCore` の静的配列（`0x27d626d28`）および `-[AXAudioHardwareManager isDolbyAtmosConfigured]`（`0x228450c30`）にて、Atmos形式判定リスト `['ec+3', 'pc+3', 'zc+3', 'qc+3', 'mat+', 'cc+3', 'mtb+', 'mtc+']` として参照しているのみ。
+5. **`AirPlaySupport`／`AirPlaySender`／`AirPlayReceiver`**
+   - AirPlay 2バッファ再生時の能力交渉（`_APSAudioFormatDescriptionListCreateForBufferedReceiverWithAudioCapabilities` の `'mtb+'`、`_audioSessionBufferedHose_updatePreferredAudioFormat` の `'mat+'`、`_audioStream_audioHoseEnableMATAtmosPlaybackInternal` の `'mata'`）およびバッジ変換（`_APSBadgingConvertAPSourceFormatToMATSourceFormat`）のみ。
+6. **`CiderAudioServer.framework`**
+   - `util::WriteDevice`（`0x2326ad5a0`）にて診断用グローバルプロパティ（`'mtb+'`、`'mtc+'`）を照会しているのみ。
+
+以上より、**macOSの標準システムバイナリ内にはPCMやE-AC-3からMAT 2.x（`mtb+`／`mtc+`）を生成するエンコーダ実装自体が存在しない（tvOS等から除外されている）**ことが確定した。
+
 ## MAT実送信試験の到達点
 
 ③「有効なMATデータをドライバへ送れるか」は、次の段階を分けて検証する必要がある。
@@ -226,7 +275,7 @@ TVのログでも、そのAtmos入力に対する出力候補5種類はすべて
 
 対応形式の列挙と書き込み可能フラグまでは確認したが、**1〜3の実送信試験は未実施**。既知の正しいMAT 2.xデータや利用可能な生成器を確保できていない。形式だけの変更、ゼロ埋めデータの送信は受信成功を証明できない。
 
-1〜3に成功しても、常時MAT化には4が別途必要になる。
+1〜3に成功しても、常時MAT化には4が別途必要になる。そして上記のシステム横断調査により、4を担うOS内蔵MAT生成器がmacOSに存在しないことが確定した。
 
 FFmpegの `spdifenc.c` にあるMAT処理はTrueHDフレームの格納処理であり、目的とするPCM＋メタデータのMAT 2.x生成器と同一視しない。[FFmpeg実装][ffmpeg-mat]
 
@@ -234,7 +283,7 @@ FFmpegの `spdifenc.c` にあるMAT処理はTrueHDフレームの格納処理で
 
 `raress96/dolby-atmos-encoder`はE-AC-3 JOCを生成するPoCで、MAT生成器ではない。READMEでも、ソフトウェア解析ではAtmosとして認識される一方、Dolby認証ハードウェアではAtmos動作しないと報告されており、今回の送信試験の既知の正しいMAT入力には使えない。[プロジェクト説明][atmos-encoder]
 
-## アプリへの影響と次の候補
+## アプリへの影響と最終判断
 
 ### 現状コードとの関係
 
@@ -243,14 +292,11 @@ FFmpegの `spdifenc.c` にあるMAT処理はTrueHDフレームの格納処理で
 - Atmos判定は多チャンネル／符号化形式とサウンドバー側の判定を利用する。常時MATを実装する場合は、**伝送形式がMATであることと、元音源がAtmosであることを分離する必要がある**。
 - 常時MATで形式切り替えの途切れが減る可能性はあるが、Atmosとステレオの音量差が解消するとは未確認。Atmos Boostを不要にできるとは判断しない。
 
-### 次に進めるなら
+### 最終判断（見送り）
 
-1. オリジナルAtmos音声でパススルーOFFを再観測し、選択音声グループ・デコーダ・HDMI形式を照合する。
-2. AudioToolboxCore、MediaToolbox等の内部処理や別コーデックに、MAT生成・出力指定の入口があるかを限定的に調べる。
-3. 利用可能な生成器／検証済みMAT 2.x入力が得られた場合に、独立した実験プログラムで送信と受信の双方を検証する。
-4. 成功後に通常PCMの取り込み・混合、Atmosメタデータ保持、排他制御、ポーズ・無音・再接続の動作を検討する。
-
-探索を続けても生成処理の入口が見つからない場合、通常機能の開発から切り離して保留する。今回の結果はOS 27.0.1と観測した接続条件に限定され、他のMac・OS・接続機器での一般的な不可能性を示すものではない。
+- `kernelcache` および `dyld_shared_cache_arm64e` 全量の調査により、HDMIドライバ（`DCPAVAudioDriver`）と `AudioToolboxCore` の変換チェーン構築部には `mtb+`／`mtc+`（Dolby Atmos MAT 2.0／2.1）の受け皿があるものの、**肝心のMATエンコーダコンポーネントがmacOSには存在しない**ことが判明した。
+- macOS上で常時MAT出力を実現するには、プロプライエタリなDolby MAT 2.xエンコーダ（PCM＋メタデータのパッキングおよびIEC 61937フレーミング）を自前実装するか、他プラットフォーム（tvOS等）からバイナリを移植する必要があり、Ambeo Companionの機能としては現実的ではない。
+- したがって、**macOSでの常時Dolby MAT出力機能はここで調査完了・採用見送り（保留）**とし、通常機能の開発から切り離す。今回の結果はmacOS 27.0.1（Build 26A434）時点のシステム構成に基づくものであり、将来のmacOSアップデートでMATエンコーダコンポーネントが同梱された場合にのみ再検討の余地がある。
 
 ## 参照資料
 
