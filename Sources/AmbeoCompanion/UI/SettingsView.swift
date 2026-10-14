@@ -171,6 +171,13 @@ struct SettingsView: View {
         Text("Preferences")
       }
 
+      Section("Media Key Permissions") {
+        PermissionSettingsView()
+        Button("Check Permissions Again") {
+          Task { await appModel.refreshMediaKeyPermissions() }
+        }
+      }
+
       // --- Section 4: Shortcuts ---
       Section {
         LabeledDescription(
@@ -223,7 +230,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.20"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.21"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)

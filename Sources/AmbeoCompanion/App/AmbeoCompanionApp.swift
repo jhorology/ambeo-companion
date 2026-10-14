@@ -6,8 +6,16 @@ struct AmbeoCompanionApp: App {
   @NSApplicationDelegateAdaptor(CompanionAppDelegate.self) private var delegate
   @State private var appModel = AppModel()
   @State private var didOfferDeviceSetup = false
+  @State private var didOfferPermissionSetup = false
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openURL) private var openURL
+
+  private func openPermissionWindow() {
+    NSApp.setActivationPolicy(.regular)
+    NSApp.unhide(nil)
+    openWindow(id: "permissions-window")
+    DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
+  }
 
   private func openSettingsWindow() {
     NSApp.setActivationPolicy(.regular)
@@ -19,6 +27,11 @@ struct AmbeoCompanionApp: App {
   }
 
   private func revertToAccessory() {
+    guard
+      !NSApp.windows.contains(where: {
+        $0.isVisible && ($0.title == "Settings" || $0.title == "Media Key Permissions")
+      })
+    else { return }
     NSApp.hide(nil)
     let success = NSApp.setActivationPolicy(.accessory)
     Logger.lifecycle.debug("Reverted activation policy to .accessory: \(success)")
@@ -131,6 +144,10 @@ struct AmbeoCompanionApp: App {
         }
         .disabled(appModel.ambeoClient == nil)
 
+        Button("Media Key Permissions...", systemImage: "lock.shield") {
+          openPermissionWindow()
+        }
+
         Button("Settings...", systemImage: "gearshape") {
           openSettingsWindow()
         }
@@ -145,6 +162,11 @@ struct AmbeoCompanionApp: App {
       }
     }
     .menuBarExtraStyle(.menu)
+    .onChange(of: appModel.needsPermissionOnboarding, initial: true) { _, needed in
+      guard needed, !didOfferPermissionSetup else { return }
+      didOfferPermissionSetup = true
+      openPermissionWindow()
+    }
     .onChange(of: appModel.networkDevices) { _, devices in
       guard appModel.settings.ambeoUid.isEmpty, !devices.isEmpty, !didOfferDeviceSetup else {
         return
@@ -171,6 +193,13 @@ struct AmbeoCompanionApp: App {
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 450, height: 500)
+
+    Window("Media Key Permissions", id: "permissions-window") {
+      PermissionOnboardingView()
+        .environment(appModel)
+        .onDisappear { revertToAccessory() }
+    }
+    .windowResizability(.contentSize)
   }
 }
 

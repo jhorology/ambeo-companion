@@ -50,6 +50,12 @@ final class AppModel: Sendable {
   /// Device and output stream that `monitoringFormatTask` observes.
   private var monitoredFormatSource: (device: AudioDeviceID, stream: AudioStreamID)?
   private var monitoringSystemEventTask: Task<Void, Never>?
+  private var monitoringPermissionsTask: Task<Void, Never>?
+  private(set) var mediaKeyPermissions = MediaKeyPermissions.current()
+
+  var needsPermissionOnboarding: Bool {
+    settings.mediaKeyEnabled && !mediaKeyPermissions.allGranted
+  }
   private var clientTask: Task<Void, Never>?
   /// Debounced reconnect after the selected device's IP changed (see `debouncedReconnectIfIPChanged`).
   private var ipChangeTask: Task<Void, Never>?
@@ -138,6 +144,13 @@ final class AppModel: Sendable {
     startMonitoringAudioDevice()
     if settings.mediaKeyEnabled {
       startMonitoringSystemEvent()
+    }
+    monitoringPermissionsTask = Task { [weak self] in
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        guard let self, !self.isShuttingDown else { return }
+        await self.refreshMediaKeyPermissions()
+      }
     }
     setupNotifications()
     setupKeyboardShortcuts()
@@ -421,6 +434,15 @@ final class AppModel: Sendable {
 
   // MARK: - System Event Monitoring (Media Keys)
 
+  func refreshMediaKeyPermissions() async {
+    // TCC queries may stall during revocation; keep them off the UI actor.
+    let current = await Task.detached { MediaKeyPermissions.current() }.value
+    guard !Task.isCancelled, !isShuttingDown else { return }
+    guard current != mediaKeyPermissions else { return }
+    mediaKeyPermissions = current
+    restartSystemEventMonitorIfNeeded()
+  }
+
   private func restartSystemEventMonitorIfNeeded() {
     monitoringSystemEventTask?.cancel()
     monitoringSystemEventTask = nil
@@ -431,6 +453,8 @@ final class AppModel: Sendable {
 
   func startMonitoringSystemEvent() {
     monitoringSystemEventTask?.cancel()
+    monitoringSystemEventTask = nil
+    guard !isShuttingDown, settings.mediaKeyEnabled, mediaKeyPermissions.allGranted else { return }
 
     // Capture current values so the Sendable closure doesn't need to touch self
     let audioDeviceUid = settings.audioDeviceUid
@@ -763,6 +787,7 @@ final class AppModel: Sendable {
 
   func prepareForTermination() async {
     isShuttingDown = true
+    monitoringPermissionsTask?.cancel()
     saveTask?.cancel()
     saveSettings()
     discoveringAmbeoTask?.cancel()
@@ -792,6 +817,7 @@ final class AppModel: Sendable {
         guard let self else { return }
         self.startDiscoveringAmbeo()
         self.startMonitoringAudioDevice()
+        await self.refreshMediaKeyPermissions()
         if self.settings.mediaKeyEnabled { self.startMonitoringSystemEvent() }
         // Reconnect client if configured
         if self.ambeoClient == nil, !self.settings.ambeoUid.isEmpty {

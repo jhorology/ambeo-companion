@@ -5,7 +5,7 @@
 #   - ListenEvent   — observing those keys
 #
 # macOS does not allow a script to turn the switches on. This resets the stale
-# TCC entries and opens each pane so they can be enabled again.
+# TCC entries and launches the app's permission onboarding.
 
 set -euo pipefail
 
@@ -15,25 +15,6 @@ cd "$ROOT"
 APP_NAME="AmbeoCompanion"
 APP_BUNDLE="${ROOT}/${APP_NAME}.app"
 DEST="/Applications/${APP_NAME}.app"
-
-open_privacy_pane() {
-  local anchor="$1"
-  open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?${anchor}" \
-    || open "x-apple.systempreferences:com.apple.preference.security?${anchor}"
-}
-
-wait_for_toggle() {
-  local title="$1"
-  echo
-  echo "Opened \"${title}\" in System Settings."
-  echo "  Please enable Ambeo Companion."
-  echo "  If not in the list, click + to add ${DEST}."
-  if [[ -t 0 ]]; then
-    read -r -p "Press Enter when done: "
-  else
-    echo "Standard input is not a terminal; continuing without waiting for toggle."
-  fi
-}
 
 echo "==> [1/4] Build and sign"
 swift Scripts/PackageApp.swift
@@ -64,20 +45,8 @@ echo "==> [3/4] Reset privacy grants for ${BUNDLE_ID}"
 tccutil reset Accessibility "$BUNDLE_ID" || echo "Warning: Failed to reset Accessibility permissions."
 tccutil reset ListenEvent "$BUNDLE_ID" || echo "Warning: Failed to reset Input Monitoring permissions."
 
-# One launch makes the new binary show up in both lists, then quit before the toggles.
-open "$DEST"
-sleep 1
-if pgrep -xq "$APP_NAME"; then
-  killall "$APP_NAME" || true
-fi
-
-echo "==> [4/4] Re-enable the two privacy panes"
-open_privacy_pane "Privacy_Accessibility"
-wait_for_toggle "Privacy & Security > Accessibility"
-open_privacy_pane "Privacy_ListenEvent"
-wait_for_toggle "Privacy & Security > Input Monitoring"
-
+echo "==> [4/4] Launch permission onboarding"
 open "$DEST"
 echo
 echo "Installed: ${DEST}"
-echo "Relaunching app after permission changes."
+echo "Use the app's Media Key Permissions window to enable both permissions."

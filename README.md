@@ -99,7 +99,7 @@ The following script handles building, signing, copying to `/Applications/AmbeoC
 Scripts/install.sh
 ```
 
-Capturing media keys requires both **Accessibility** (active event tap to intercept and consume events) and **Input Monitoring** (observing keys). The script resets both TCC registrations and opens the respective System Settings panes. Because macOS does not permit scripts to toggle these switches automatically, please enable them manually in the displayed settings windows.
+Capturing media keys requires both **Device Control and Data Access** (called **Accessibility** before macOS 27; active event tap to intercept and consume events) and **Input Monitoring** (observing keys). The script resets both TCC registrations and launches the app. Its Media Key Permissions window shows each permission status and opens the corresponding System Settings pane. Enable the switches manually; the app checks for changes and starts media key interception once both permissions are allowed. You can set up later and reopen the guide from the menu bar or check permissions in Settings.
 
 ---
 
@@ -107,12 +107,12 @@ Capturing media keys requires both **Accessibility** (active event tap to interc
 
 Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed, and forwarded to the AMBEO Soundbar. This requires both of the following permissions:
 
-- **System Settings > Privacy & Security > Accessibility**
+- **System Settings > Privacy & Security > Device Control and Data Access** (macOS 27+) or **Accessibility** (earlier macOS)
 - **System Settings > Privacy & Security > Input Monitoring**
 
 If `AmbeoCompanion.app` is not listed, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on.
 
-Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset both registrations and open the settings panes in sequence. If media keys do not work, run the script or toggle the switches off and back on in each pane.
+Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset both registrations and launch permission onboarding. If media keys do not work, run the script or toggle the switches off and back on in each pane.
 
 ---
 
