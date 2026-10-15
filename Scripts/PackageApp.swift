@@ -93,7 +93,14 @@ if let resItems = try? fm.contentsOfDirectory(atPath: resPath) {
 }
 // Sign the main app bundle with Automation entitlement required by Hardened Runtime
 shell(
-  "codesign", "--force", "--options", "runtime", "--entitlements", entitlementsSrc, "--sign", "-",
+  "codesign",
+  "--force",
+  "--options",
+  "runtime",
+  "--entitlements",
+  entitlementsSrc,
+  "--sign",
+  "-",
   appBundle
 )
 

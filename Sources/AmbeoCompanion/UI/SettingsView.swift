@@ -163,7 +163,7 @@ struct SettingsView: View {
             .frame(width: 150)
             Text("\(model.settings.stealthRewindDelayMs) ms")
               .monospacedDigit()
-              .frame(width: 55, alignment: .trailing)
+              .frame(width: 40, alignment: .trailing)
           }
           .disabled(!model.settings.stealthRewindEnabled)
         }
@@ -174,11 +174,11 @@ struct SettingsView: View {
             "Volume offset automatically applied when switching between Dolby Atmos and stereo playback."
         ) {
           HStack {
-            Slider(value: $model.settings.atmosBoostAmount, in: 0...40, step: 5)
+            Slider(value: $model.settings.atmosBoostAmount, in: 0...40)
               .frame(width: 150)
             Text("\(Int(model.settings.atmosBoostAmount))%")
               .monospacedDigit()
-              .frame(width: 45, alignment: .trailing)
+              .frame(width: 40, alignment: .trailing)
           }
         }
 
