@@ -26,19 +26,38 @@ struct AmbeoCompanionApp: App {
     }
   }
 
-  private func revertToAccessory() {
-    guard
-      !NSApp.windows.contains(where: {
-        $0.isVisible
-          && ($0.title == "Settings"
-            || $0.title == "Permissions"
-            || $0.identifier?.rawValue == "settings-window"
-            || $0.identifier?.rawValue == "permissions-window")
-      })
-    else { return }
-    NSApp.hide(nil)
-    let success = NSApp.setActivationPolicy(.accessory)
-    Logger.lifecycle.debug("Reverted activation policy to .accessory: \(success)")
+  private static let managedWindowIDs = ["settings-window", "permissions-window"]
+
+  private static func isManagedWindow(_ window: NSWindow) -> Bool {
+    if window.title == "Settings" || window.title == "Permissions" { return true }
+    guard let id = window.identifier?.rawValue else { return false }
+    return managedWindowIDs.contains(where: { id.hasPrefix($0) })
+  }
+
+  /// Returns to `.accessory` (no Dock icon / Cmd+Tab entry) once no managed window remains.
+  /// While `willClose` / `onDisappear` fire, the closing window still reports `isVisible == true`,
+  /// so the closing window is excluded and the check is deferred to the next run loop turn.
+  private func revertToAccessory(closing: NSWindow? = nil) {
+    DispatchQueue.main.async {
+      guard
+        !NSApp.windows.contains(where: {
+          $0 !== closing && $0.isVisible && Self.isManagedWindow($0)
+        })
+      else { return }
+      guard NSApp.activationPolicy() != .accessory else { return }
+      NSApp.hide(nil)
+      let success = NSApp.setActivationPolicy(.accessory)
+      Logger.lifecycle.debug("Reverted activation policy to .accessory: \(success)")
+    }
+  }
+
+  private var windowWillClose: NotificationCenter.Publisher {
+    NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
+  }
+
+  private func handleWillClose(_ notif: Notification) {
+    guard let win = notif.object as? NSWindow, Self.isManagedWindow(win) else { return }
+    revertToAccessory(closing: win)
   }
 
   private static func presetIcon(_ preset: String) -> String {
@@ -187,15 +206,7 @@ struct AmbeoCompanionApp: App {
         .onDisappear {
           revertToAccessory()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) {
-          notif in
-          guard let win = notif.object as? NSWindow,
-            win.identifier?.rawValue == "settings-window" || win.title == "Settings"
-          else {
-            return
-          }
-          revertToAccessory()
-        }
+        .onReceive(windowWillClose, perform: handleWillClose)
     }
     .windowStyle(.hiddenTitleBar)
     .defaultSize(width: 450, height: 500)
@@ -204,6 +215,7 @@ struct AmbeoCompanionApp: App {
       PermissionOnboardingView()
         .environment(appModel)
         .onDisappear { revertToAccessory() }
+        .onReceive(windowWillClose, perform: handleWillClose)
     }
     .windowResizability(.contentSize)
   }

@@ -163,7 +163,7 @@ struct SettingsView: View {
             .frame(width: 150)
             Text("\(model.settings.stealthRewindDelayMs) ms")
               .monospacedDigit()
-              .frame(width: 40, alignment: .trailing)
+              .frame(width: 46, alignment: .trailing)
           }
           .disabled(!model.settings.stealthRewindEnabled)
         }
@@ -174,11 +174,14 @@ struct SettingsView: View {
             "Volume offset automatically applied when switching between Dolby Atmos and stereo playback."
         ) {
           HStack {
-            Slider(value: $model.settings.atmosBoostAmount, in: 0...40)
-              .frame(width: 150)
+            Slider(
+              value: $model.settings.atmosBoostAmount,
+              in: 0...40,
+            )
+            .frame(width: 150)
             Text("\(Int(model.settings.atmosBoostAmount))%")
               .monospacedDigit()
-              .frame(width: 40, alignment: .trailing)
+              .frame(width: 46, alignment: .trailing)
           }
         }
 
@@ -254,7 +257,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.25"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.26"
           Text("Ambeo Companion v\(version)")
             .font(.footnote)
             .foregroundStyle(.tertiary)
