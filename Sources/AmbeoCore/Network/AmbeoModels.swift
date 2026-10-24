@@ -1,12 +1,10 @@
 import Foundation
 
-@propertyWrapper
-public struct Stringified<T: LosslessStringConvertible>: Decodable, Sendable where T: Sendable {
+@propertyWrapper public struct Stringified<T: LosslessStringConvertible>: Decodable, Sendable
+where T: Sendable {
   public var wrappedValue: T?
 
-  public init(wrappedValue: T? = nil) {
-    self.wrappedValue = wrappedValue
-  }
+  public init(wrappedValue: T? = nil) { self.wrappedValue = wrappedValue }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
@@ -50,9 +48,7 @@ public struct AmbeoEntry<E: AmbeoEndpointProtocol>: Decodable, Sendable {
   public let edit: E.Edit?
   public let value: E.Payload?
 
-  enum CodingKeys: String, CodingKey {
-    case title, modifiable, edit, value
-  }
+  enum CodingKeys: String, CodingKey { case title, modifiable, edit, value }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -84,9 +80,7 @@ public struct AmbeoPowerTarget: Decodable, Sendable {
   public let nextReason: String?
 }
 
-public struct AmbeoPlayLogicData: Decodable, Sendable {
-  public let state: String
-}
+public struct AmbeoPlayLogicData: Decodable, Sendable { public let state: String }
 
 public struct AmbeoAudioFormat: Decodable, Sendable, Equatable {
   public let codec: String?

@@ -10,8 +10,7 @@ import Logging
 /// 4. Rewind `Music.app` playback position to `0` via Automation
 /// 5. Wait a configurable settle delay (`settleDelay`) for the pre-seek buffer to drain
 /// 6. Unmute AMBEO (with a safety timeout so the soundbar is never left muted)
-@MainActor
-public final class StealthRewindCoordinator {
+@MainActor public final class StealthRewindCoordinator {
   public static let defaultSettleDelay: Duration = .milliseconds(250)
   public static let defaultMuteTimeout: Duration = .seconds(5)
 
@@ -70,17 +69,13 @@ public final class StealthRewindCoordinator {
 
   /// Resets the tracked physical format so the next emission from a newly monitored stream
   /// is treated as the baseline format rather than a transition.
-  public func resetObservedFormat() {
-    lastObservedFormat = nil
-  }
+  public func resetObservedFormat() { lastObservedFormat = nil }
 
   /// Suspends the caller while a Stealth Rewind session is actively muting the soundbar.
   /// Used by Atmos Boost so `player:volume` writes do not prematurely unmute the AMBEO hardware.
   public func waitForActiveSession() async {
     guard isSessionActive else { return }
-    await withCheckedContinuation { continuation in
-      sessionWaiters.append(continuation)
-    }
+    await withCheckedContinuation { continuation in sessionWaiters.append(continuation) }
   }
 
   /// Step 1: Handles a physical format emission from `AudioDeviceMonitor.formatStream`.
@@ -162,9 +157,7 @@ public final class StealthRewindCoordinator {
     let setMute = self.setMute
     let muteTask = Task { @MainActor in try await setMute(true) }
     inFlightMute = muteTask
-    defer {
-      if inFlightMute == muteTask { inFlightMute = nil }
-    }
+    defer { if inFlightMute == muteTask { inFlightMute = nil } }
     do {
       try await muteTask.value
       let muteRpcMs = muteStart.duration(to: ContinuousClock.now).millisecondsString
@@ -188,10 +181,8 @@ public final class StealthRewindCoordinator {
     // If switching between Atmos and Stereo and the soundbar already reported the new locked format
     // just before CoreAudio's callback arrived, begin Step 4 rewind immediately; otherwise wait for Step 3.
     let formatClassChanged = (previous.format.isAtmosOrMultichannel != targetIsAtmos)
-    if formatClassChanged,
-      let currentSBFormat = await currentSoundbarFormatProvider(),
-      isSessionActive, sessionID == currentID,
-      phase == .waitingForInitialLock,
+    if formatClassChanged, let currentSBFormat = await currentSoundbarFormatProvider(),
+      isSessionActive, sessionID == currentID, phase == .waitingForInitialLock,
       currentSBFormat.matchesTransitionTarget(isAtmosOrMultichannel: targetIsAtmos)
     {
       beginRewindAndSettlePhase(for: currentID, format: currentSBFormat)
@@ -256,14 +247,8 @@ public final class StealthRewindCoordinator {
 
       // Step 5: Wait settleDelay for the pre-seek buffer to drain before unmuting
       let delay = self.settleDelay
-      Logger.audio.info(
-        "Stealth Rewind [5/6]: Waiting \(delay) before unmuting AMBEO..."
-      )
-      do {
-        try await Task.sleep(for: delay)
-      } catch {
-        return
-      }
+      Logger.audio.info("Stealth Rewind [5/6]: Waiting \(delay) before unmuting AMBEO...")
+      do { try await Task.sleep(for: delay) } catch { return }
       guard self.isSessionActive, self.sessionID == id else { return }
 
       await self.completeAndUnmute(for: id)
@@ -279,11 +264,7 @@ public final class StealthRewindCoordinator {
     timeoutTask?.cancel()
     let timeout = muteTimeout
     timeoutTask = Task { @MainActor [weak self] in
-      do {
-        try await Task.sleep(for: timeout)
-      } catch {
-        return
-      }
+      do { try await Task.sleep(for: timeout) } catch { return }
       guard let self, self.isSessionActive, self.sessionID == id else { return }
       Logger.audio.warning(
         "Stealth Rewind: Mute timeout (\(timeout)) expired waiting for AMBEO format switch (\(self.elapsedSummary())). Unmuting AMBEO."
@@ -316,8 +297,7 @@ public final class StealthRewindCoordinator {
           self.needsUnmute = false
           self.finishSession(id: id)
           return
-        case true?:
-          break
+        case true?: break
         }
       }
       await self.unmuteIfNeeded(stepLabel: stepLabel)
@@ -328,9 +308,7 @@ public final class StealthRewindCoordinator {
   }
 
   private func unmuteIfNeeded(stepLabel: String) async {
-    if let inFlightMute {
-      _ = try? await inFlightMute.value
-    }
+    if let inFlightMute { _ = try? await inFlightMute.value }
     guard needsUnmute else {
       Logger.audio.debug(
         "Stealth Rewind [\(stepLabel)]: Skipping unmute because AMBEO was already muted before transition."
@@ -363,9 +341,7 @@ public final class StealthRewindCoordinator {
 
     let waiters = sessionWaiters
     sessionWaiters.removeAll()
-    for waiter in waiters {
-      waiter.resume()
-    }
+    for waiter in waiters { waiter.resume() }
 
     clearOSDSuppressionTask?.cancel()
     clearOSDSuppressionTask = Task { @MainActor [weak self] in
@@ -396,13 +372,10 @@ extension AmbeoAudioFormat {
   /// Whether the soundbar decoder is locked onto an active audio stream
   /// (as opposed to `codec: "none"` / `channels: 0` while renegotiating HDMI/eARC).
   var isLocked: Bool {
-    guard let codec = codec?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !codec.isEmpty,
+    guard let codec = codec?.trimmingCharacters(in: .whitespacesAndNewlines), !codec.isEmpty,
       codec.caseInsensitiveCompare("none") != .orderedSame
     else { return false }
-    if let channels, channels <= 0 {
-      return false
-    }
+    if let channels, channels <= 0 { return false }
     return true
   }
 

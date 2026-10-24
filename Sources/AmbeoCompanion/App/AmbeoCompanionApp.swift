@@ -12,24 +12,19 @@ struct AmbeoCompanionApp: App {
 
   private func openPermissionWindow() {
     NSApp.setActivationPolicy(.regular)
-    NSApp.unhide(nil)
     openWindow(id: "permissions-window")
     DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
   }
 
   private func openSettingsWindow() {
     NSApp.setActivationPolicy(.regular)
-    NSApp.unhide(nil)
     openWindow(id: "settings-window")
-    DispatchQueue.main.async {
-      NSApp.activate(ignoringOtherApps: true)
-    }
+    DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
   }
 
   private static let managedWindowIDs = ["settings-window", "permissions-window"]
 
   private static func isManagedWindow(_ window: NSWindow) -> Bool {
-    if window.title == "Settings" || window.title == "Permissions" { return true }
     guard let id = window.identifier?.rawValue else { return false }
     return managedWindowIDs.contains(where: { id.hasPrefix($0) })
   }
@@ -45,15 +40,14 @@ struct AmbeoCompanionApp: App {
         })
       else { return }
       guard NSApp.activationPolicy() != .accessory else { return }
-      NSApp.hide(nil)
       let success = NSApp.setActivationPolicy(.accessory)
       Logger.lifecycle.debug("Reverted activation policy to .accessory: \(success)")
     }
   }
 
-  private var windowWillClose: NotificationCenter.Publisher {
-    NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)
-  }
+  private static let windowWillClose = NotificationCenter.default.publisher(
+    for: NSWindow.willCloseNotification
+  )
 
   private func handleWillClose(_ notif: Notification) {
     guard let win = notif.object as? NSWindow, Self.isManagedWindow(win) else { return }
@@ -94,9 +88,7 @@ struct AmbeoCompanionApp: App {
               ForEach(AmbeoEndpoint.Audio.Preset.allPresets, id: \.self) { preset in
                 Label(preset.capitalized, systemImage: Self.presetIcon(preset)).tag(preset)
               }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
+            }.pickerStyle(.inline).labelsHidden()
           }
 
           Section("AMBEO (\(state.preset.capitalized))") {
@@ -105,9 +97,7 @@ struct AmbeoCompanionApp: App {
                 get: { state.isAmbeoMode },
                 set: { _ in Task { await appModel.toggleAmbeoMode() } }
               )
-            ) {
-              Label("AMBEO Mode", systemImage: "waveform")
-            }
+            ) { Label("AMBEO Mode", systemImage: "waveform") }
 
             Picker(
               "AMBEO Level",
@@ -119,10 +109,7 @@ struct AmbeoCompanionApp: App {
               ForEach(AmbeoEndpoint.Audio.AmbeoLevel.allLevels, id: \.self) { level in
                 Label(level.capitalized, systemImage: Self.ambeoLevelIcon(level)).tag(level)
               }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            .disabled(!state.isAmbeoMode)
+            }.pickerStyle(.inline).labelsHidden().disabled(!state.isAmbeoMode)
           }
 
           Section {
@@ -131,18 +118,14 @@ struct AmbeoCompanionApp: App {
                 get: { state.isNightMode },
                 set: { _ in Task { await appModel.toggleNightMode() } }
               )
-            ) {
-              Label("Night Mode", systemImage: "moon.fill")
-            }
+            ) { Label("Night Mode", systemImage: "moon.fill") }
 
             Toggle(
               isOn: Binding(
                 get: { state.isVoiceEnhancement },
                 set: { _ in Task { await appModel.toggleVoiceEnhancement() } }
               )
-            ) {
-              Label("Voice Enhancement", systemImage: "waveform.and.person.filled")
-            }
+            ) { Label("Voice Enhancement", systemImage: "waveform.and.person.filled") }
           }
 
           Divider()
@@ -151,78 +134,60 @@ struct AmbeoCompanionApp: App {
         Button("Smart Control...", systemImage: "network") {
           if let device = appModel.networkDevices.first(where: {
             $0.uuid == appModel.settings.ambeoUid
-          }),
-            let url = URL(string: "http://\(device.ip)")
-          {
+          }), let url = URL(string: "http://\(device.ip)") {
             openURL(url)
           }
-        }
-        .disabled(
+        }.disabled(
           appModel.settings.ambeoUid.isEmpty
             || !appModel.networkDevices.contains(where: { $0.uuid == appModel.settings.ambeoUid })
         )
 
         Button("Wake Up Soundbar", systemImage: "bolt.fill") {
           Task { await appModel.wakeUpSoundbar() }
-        }
-        .disabled(appModel.ambeoClient == nil)
+        }.disabled(appModel.ambeoClient == nil)
 
-        Button("Permissions...", systemImage: "lock.shield") {
-          openPermissionWindow()
-        }
+        Button("Permissions...", systemImage: "lock.shield") { openPermissionWindow() }
 
-        Button("Settings...", systemImage: "gearshape") {
-          openSettingsWindow()
-        }
-        .keyboardShortcut(",", modifiers: .command)
+        Button("Settings...", systemImage: "gearshape") { openSettingsWindow() }.keyboardShortcut(
+          ",",
+          modifiers: .command
+        )
 
         Divider()
 
         Button("Quit Ambeo Companion", systemImage: "xmark.rectangle") {
           NSApplication.shared.terminate(nil)
+        }.keyboardShortcut("q")
+      }
+    }.menuBarExtraStyle(.menu)
+      // Offer once per launch. The Music.app Automation status flips with Music.app launching and
+      // quitting, so re-arming on every change would reopen the window each time Music.app starts.
+      .onChange(of: appModel.needsPermissionOnboarding, initial: true) { _, needed in
+        guard needed, !didOfferPermissionSetup else { return }
+        didOfferPermissionSetup = true
+        openPermissionWindow()
+      }.onChange(of: appModel.networkDevices) { _, devices in
+        guard appModel.settings.ambeoUid.isEmpty, !devices.isEmpty, !didOfferDeviceSetup else {
+          return
         }
-        .keyboardShortcut("q")
+        didOfferDeviceSetup = true
+        openSettingsWindow()
       }
-    }
-    .menuBarExtraStyle(.menu)
-    // Offer once per launch. The Music.app Automation status flips with Music.app launching and
-    // quitting, so re-arming on every change would reopen the window each time Music.app starts.
-    .onChange(of: appModel.needsPermissionOnboarding, initial: true) { _, needed in
-      guard needed, !didOfferPermissionSetup else { return }
-      didOfferPermissionSetup = true
-      openPermissionWindow()
-    }
-    .onChange(of: appModel.networkDevices) { _, devices in
-      guard appModel.settings.ambeoUid.isEmpty, !devices.isEmpty, !didOfferDeviceSetup else {
-        return
-      }
-      didOfferDeviceSetup = true
-      openSettingsWindow()
-    }
 
     Window("Settings", id: "settings-window") {
-      SettingsView()
-        .environment(appModel)
-        .onDisappear {
-          revertToAccessory()
-        }
-        .onReceive(windowWillClose, perform: handleWillClose)
-    }
-    .windowStyle(.hiddenTitleBar)
-    .defaultSize(width: 450, height: 500)
+      SettingsView().environment(appModel).onReceive(Self.windowWillClose, perform: handleWillClose)
+    }.windowStyle(.hiddenTitleBar).defaultSize(width: 450, height: 500)
 
     Window("Permissions", id: "permissions-window") {
-      PermissionOnboardingView()
-        .environment(appModel)
-        .onDisappear { revertToAccessory() }
-        .onReceive(windowWillClose, perform: handleWillClose)
-    }
-    .windowResizability(.contentSize)
+      PermissionOnboardingView().environment(appModel).onReceive(
+        Self.windowWillClose,
+        perform: handleWillClose
+      )
+    }.windowResizability(.contentSize)
   }
 }
 
-@MainActor
-final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
   private var isTerminating = false
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

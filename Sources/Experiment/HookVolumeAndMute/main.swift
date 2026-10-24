@@ -3,8 +3,7 @@ import AppKit
 import Foundation
 import Logging
 
-@MainActor
-class HookVolumeAndMute {
+@MainActor class HookVolumeAndMute {
   var audioDeviceUid: String = "" {
     didSet {
       if oldValue != audioDeviceUid {
@@ -20,9 +19,7 @@ class HookVolumeAndMute {
 
   private var monitorTask: Task<Void, Never>? = nil
 
-  init() {
-    setupNotifications()
-  }
+  init() { setupNotifications() }
 
   func startMonitoring() {
     monitorTask?.cancel()
@@ -33,9 +30,7 @@ class HookVolumeAndMute {
         let targetKeys: [SystemEvent.MediaKey] = [.soundUp, .soundDown, .mute]
         guard targetKeys.contains(key) else { return false }
 
-        guard
-          let device = AudioDeviceMonitor.shared.audioDevice(withUid: audioDeviceUid)
-        else {
+        guard let device = AudioDeviceMonitor.shared.audioDevice(withUid: audioDeviceUid) else {
           Logger.audio.debug("Target device: [uid=\(audioDeviceUid)] not found.")
           return false
         }

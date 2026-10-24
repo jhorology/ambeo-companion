@@ -16,7 +16,7 @@
   "lineBreakBeforeEachGenericRequirement": true,
   "lineLength": 100,
   "maximumBlankLines": 1,
-  "respectsExistingLineBreaks": true,
+  "respectsExistingLineBreaks": false,
   "prioritizeKeepingFunctionOutputTogether": true,
   "rules": {
     "AllPublicDeclarationsHaveDocumentation": false,

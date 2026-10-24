@@ -1,8 +1,7 @@
 import Foundation
 
 /// Records only successful hardware changes, independently for each soundbar.
-@MainActor
-public final class AtmosBoostLedger {
+@MainActor public final class AtmosBoostLedger {
   private let defaults: UserDefaults
   private let key: String
   private var amounts: [String: Int]

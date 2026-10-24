@@ -5,9 +5,7 @@ import PackageDescription
 
 let package = Package(
   name: "AmbeoCompanion",
-  platforms: [
-    .macOS(.v14)
-  ],
+  platforms: [.macOS(.v14)],
   dependencies: [
     .package(url: "https://github.com/apple/swift-log.git", from: "1.15.1"),
     .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.1.0"),
@@ -16,19 +14,15 @@ let package = Package(
     // Core
     .target(
       name: "AmbeoCore",
-      dependencies: [
-        .product(name: "Logging", package: "swift-log")
-      ],
+      dependencies: [.product(name: "Logging", package: "swift-log")],
       path: "Sources/AmbeoCore"
-    ),
-    .testTarget(name: "AmbeoCoreTests", dependencies: ["AmbeoCore"]),
+    ), .testTarget(name: "AmbeoCoreTests", dependencies: ["AmbeoCore"]),
     // Targets are the basic building blocks of a package, defining a module or a test suite.
     // Targets can depend on other targets in this package and products from dependencies.
     .executableTarget(
       name: "AmbeoCompanion",
       dependencies: [
-        "AmbeoCore",
-        .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+        "AmbeoCore", .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
       ],
       path: "Sources/AmbeoCompanion",
       exclude: ["Info.plist", "AmbeoCompanion.entitlements", "Resources"]

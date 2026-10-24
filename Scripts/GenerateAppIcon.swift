@@ -157,11 +157,7 @@ let topBarRect = NSRect(
   height: barHeight
 )
 symbolPath.append(
-  NSBezierPath(
-    roundedRect: topBarRect,
-    xRadius: barHeight / 2,
-    yRadius: barHeight / 2
-  )
+  NSBezierPath(roundedRect: topBarRect, xRadius: barHeight / 2, yRadius: barHeight / 2)
 )
 
 // B. Bottom Bar
@@ -173,11 +169,7 @@ let bottomBarRect = NSRect(
   height: barHeight
 )
 symbolPath.append(
-  NSBezierPath(
-    roundedRect: bottomBarRect,
-    xRadius: barHeight / 2,
-    yRadius: barHeight / 2
-  )
+  NSBezierPath(roundedRect: bottomBarRect, xRadius: barHeight / 2, yRadius: barHeight / 2)
 )
 
 // C. Center Horizontal Line
@@ -206,13 +198,7 @@ for i in 0..<7 {
   let cx = 512 + CGFloat(i - 3) * pitch
   let h = vBarHeights[i]
   let r = NSRect(x: cx - vBarWidth / 2, y: 512 - h / 2, width: vBarWidth, height: h)
-  symbolPath.append(
-    NSBezierPath(
-      roundedRect: r,
-      xRadius: vBarWidth / 2,
-      yRadius: vBarWidth / 2
-    )
-  )
+  symbolPath.append(NSBezierPath(roundedRect: r, xRadius: vBarWidth / 2, yRadius: vBarWidth / 2))
 }
 
 // Symbol subtle bottom highlight (emboss effect)
@@ -325,15 +311,9 @@ try? fm.removeItem(atPath: iconsetDir)
 try! fm.createDirectory(atPath: iconsetDir, withIntermediateDirectories: true)
 
 let sizes: [(name: String, px: Int)] = [
-  ("icon_16x16.png", 16),
-  ("icon_16x16@2x.png", 32),
-  ("icon_32x32.png", 32),
-  ("icon_32x32@2x.png", 64),
-  ("icon_128x128.png", 128),
-  ("icon_128x128@2x.png", 256),
-  ("icon_256x256.png", 256),
-  ("icon_256x256@2x.png", 512),
-  ("icon_512x512.png", 512),
+  ("icon_16x16.png", 16), ("icon_16x16@2x.png", 32), ("icon_32x32.png", 32),
+  ("icon_32x32@2x.png", 64), ("icon_128x128.png", 128), ("icon_128x128@2x.png", 256),
+  ("icon_256x256.png", 256), ("icon_256x256@2x.png", 512), ("icon_512x512.png", 512),
   ("icon_512x512@2x.png", 1024),
 ]
 

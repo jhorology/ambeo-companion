@@ -11,17 +11,14 @@ public enum MusicAutomationPermissionStatus: Sendable, Equatable {
   case denied
   case musicNotRunning
 
-  public var isGranted: Bool {
-    self == .granted
-  }
+  public var isGranted: Bool { self == .granted }
 }
 
 public protocol MusicPlayerControlling: Sendable {
   func isRunning() -> Bool
   func permissionStatus(askUserIfNeeded: Bool) -> MusicAutomationPermissionStatus
   func isPlaying() async -> Bool
-  @discardableResult
-  func rewindToStart() async -> Bool
+  @discardableResult func rewindToStart() async -> Bool
 }
 
 public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sendable {
@@ -68,10 +65,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
         Self.isPlayingScriptSource,
         name: "isPlaying"
       )
-      self.compiledRewindScript = Self.compileScript(
-        Self.rewindScriptSource,
-        name: "rewindToStart"
-      )
+      self.compiledRewindScript = Self.compileScript(Self.rewindScriptSource, name: "rewindToStart")
     }
     refreshPlaybackStateInBackground()
   }
@@ -100,8 +94,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     ) { [weak self] notification in
       guard
         let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
-          as? NSRunningApplication,
-        app.bundleIdentifier == Self.musicBundleIdentifier
+          as? NSRunningApplication, app.bundleIdentifier == Self.musicBundleIdentifier
       else { return }
       self?.cachedIsPlaying.withLock { $0 = false }
     }
@@ -112,19 +105,14 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
   public func refreshPlaybackStateInBackground() {
     guard isRunning(), permissionStatus(askUserIfNeeded: false) == .granted else { return }
     scriptQueue.async { [weak self] in
-      guard let self, self.isRunning(),
-        self.permissionStatus(askUserIfNeeded: false) == .granted
+      guard let self, self.isRunning(), self.permissionStatus(askUserIfNeeded: false) == .granted
       else { return }
       let playing = self.executeScriptOnQueue(
         &self.compiledIsPlayingScript,
         source: Self.isPlayingScriptSource,
         action: "seed playback state"
       )
-      self.cachedIsPlaying.withLock { current in
-        if current == nil {
-          current = playing
-        }
-      }
+      self.cachedIsPlaying.withLock { current in if current == nil { current = playing } }
     }
   }
 
@@ -134,9 +122,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
   }
 
   public func permissionStatus(askUserIfNeeded: Bool) -> MusicAutomationPermissionStatus {
-    guard isRunning() else {
-      return .musicNotRunning
-    }
+    guard isRunning() else { return .musicNotRunning }
     let target = NSAppleEventDescriptor(bundleIdentifier: Self.musicBundleIdentifier)
     let status = AEDeterminePermissionToAutomateTarget(
       target.aeDesc,
@@ -150,14 +136,10 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
       )
     }
     switch status {
-    case noErr:
-      return .granted
-    case OSStatus(errAEEventWouldRequireUserConsent):
-      return .notDetermined
-    case OSStatus(errAEEventNotPermitted):
-      return .denied
-    case OSStatus(procNotFound):
-      return .musicNotRunning
+    case noErr: return .granted
+    case OSStatus(errAEEventWouldRequireUserConsent): return .notDetermined
+    case OSStatus(errAEEventNotPermitted): return .denied
+    case OSStatus(procNotFound): return .musicNotRunning
     default:
       Logger.audio.debug("AEDeterminePermissionToAutomateTarget returned status=\(status)")
       return .denied
@@ -167,9 +149,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
   /// Requests Automation permission for `Music.app`, falling back to executing a lightweight
   /// read-only AppleEvent if `AEDeterminePermissionToAutomateTarget` does not resolve the state.
   public func requestPermission() async -> MusicAutomationPermissionStatus {
-    guard isRunning() else {
-      return .musicNotRunning
-    }
+    guard isRunning() else { return .musicNotRunning }
     let status = await Task.detached(priority: .userInitiated) {
       self.permissionStatus(askUserIfNeeded: true)
     }.value
@@ -190,9 +170,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
           action: "request Automation permission"
         )
         let updatedStatus = self.permissionStatus(askUserIfNeeded: false)
-        if updatedStatus == .granted {
-          self.cachedIsPlaying.withLock { $0 = playing }
-        }
+        if updatedStatus == .granted { self.cachedIsPlaying.withLock { $0 = playing } }
         Logger.audio.info(
           "MusicPlayerController: Automation permission request finished with status=\(String(describing: updatedStatus))"
         )
@@ -204,9 +182,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
   /// Launches `Music.app` in the background if it is not currently running so macOS can register
   /// or prompt for Automation permission against `com.apple.Music`.
   public func ensureMusicRunningForPermissionPrompt() async -> Bool {
-    if isRunning() {
-      return true
-    }
+    if isRunning() { return true }
     guard
       let appURL = NSWorkspace.shared.urlForApplication(
         withBundleIdentifier: Self.musicBundleIdentifier
@@ -223,9 +199,8 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     config.addsToRecentItems = false
     config.hides = true
 
-    do {
-      _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: config)
-    } catch {
+    do { _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: config) } catch
+    {
       Logger.lifecycle.warning(
         "Failed to launch Music.app for Automation permission prompt: \(error.localizedDescription)"
       )
@@ -233,9 +208,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     }
 
     for _ in 0..<25 {
-      if isRunning(), permissionStatus(askUserIfNeeded: false) != .musicNotRunning {
-        return true
-      }
+      if isRunning(), permissionStatus(askUserIfNeeded: false) != .musicNotRunning { return true }
       try? await Task.sleep(for: .milliseconds(100))
     }
     return isRunning()
@@ -249,12 +222,9 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
 
     let status = permissionStatus(askUserIfNeeded: false)
     switch status {
-    case .musicNotRunning:
-      return false
+    case .musicNotRunning: return false
     case .denied:
-      Logger.audio.warning(
-        "Stealth Rewind skipped: Music.app Automation permission is denied."
-      )
+      Logger.audio.warning("Stealth Rewind skipped: Music.app Automation permission is denied.")
       return false
     case .notDetermined:
       // Never prompt here: this runs mid format transition, and a consent dialog would stall the
@@ -263,15 +233,12 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
         "Stealth Rewind skipped: Music.app Automation permission has not been requested yet."
       )
       return false
-    case .granted:
-      break
+    case .granted: break
     }
 
     // Fast path: return cached state from `com.apple.Music.playerInfo` immediately (0ms)
     // so we do not block on AppleEvents while Music.app's main thread is switching CoreAudio formats.
-    if let cached = cachedIsPlaying.withLock({ $0 }) {
-      return cached
-    }
+    if let cached = cachedIsPlaying.withLock({ $0 }) { return cached }
 
     return await withCheckedContinuation { continuation in
       scriptQueue.async { [weak self] in
@@ -290,15 +257,11 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     }
   }
 
-  @discardableResult
-  public func rewindToStart() async -> Bool {
-    guard isRunning(), permissionStatus(askUserIfNeeded: false) == .granted else {
-      return false
-    }
+  @discardableResult public func rewindToStart() async -> Bool {
+    guard isRunning(), permissionStatus(askUserIfNeeded: false) == .granted else { return false }
     return await withCheckedContinuation { continuation in
       scriptQueue.async { [weak self] in
-        guard let self, self.isRunning(),
-          self.permissionStatus(askUserIfNeeded: false) == .granted
+        guard let self, self.isRunning(), self.permissionStatus(askUserIfNeeded: false) == .granted
         else {
           continuation.resume(returning: false)
           return
@@ -348,9 +311,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
         source: source,
         action: action
       )
-    else {
-      return false
-    }
+    else { return false }
     return descriptor.booleanValue
   }
 
@@ -359,9 +320,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     source: String,
     action: String
   ) -> NSAppleEventDescriptor? {
-    if compiledScript == nil {
-      compiledScript = Self.compileScript(source, name: action)
-    }
+    if compiledScript == nil { compiledScript = Self.compileScript(source, name: action) }
     guard let script = compiledScript else {
       Logger.audio.warning("MusicPlayerController: AppleScript unavailable for \(action)")
       return nil
@@ -369,9 +328,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     var errorDict: NSDictionary?
     let descriptor = script.executeAndReturnError(&errorDict)
     if let errorDict {
-      Logger.audio.warning(
-        "MusicPlayerController: failed to \(action) (\(errorDict))"
-      )
+      Logger.audio.warning("MusicPlayerController: failed to \(action) (\(errorDict))")
       return nil
     }
     return descriptor

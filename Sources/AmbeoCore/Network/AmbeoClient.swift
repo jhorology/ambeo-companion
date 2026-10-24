@@ -52,9 +52,7 @@ public actor AmbeoClient {
     guard !registeredPaths.contains(endpoint.path) else { return }
     registeredPaths.insert(endpoint.path)
     stateUpdaters[endpoint.path] = { value, state in
-      if let v = value as? E.Payload {
-        endpoint.apply(v, to: &state)
-      }
+      if let v = value as? E.Payload { endpoint.apply(v, to: &state) }
     }
 
     do {
@@ -113,10 +111,7 @@ public actor AmbeoClient {
   ) async {
     if let itemValueData {
       do {
-        let container = try decoder.decode(
-          AmbeoValueContainer<E.Payload>.self,
-          from: itemValueData
-        )
+        let container = try decoder.decode(AmbeoValueContainer<E.Payload>.self, from: itemValueData)
         notifyUpdate(path: endpoint.path, newValue: container.decodedValue)
         return
       } catch {
@@ -141,13 +136,12 @@ public actor AmbeoClient {
     components.host = host
     components.path = "/api/getData"
     components.queryItems = [
-      URLQueryItem(name: "path", value: endpoint.path),
-      URLQueryItem(name: "roles", value: "@all"),
+      URLQueryItem(name: "path", value: endpoint.path), URLQueryItem(name: "roles", value: "@all"),
       URLQueryItem(name: "_nocache", value: String(Int64(Date().timeIntervalSince1970 * 1000))),
     ]
-    guard let url = components.url,
-      let (data, _) = try? await session.data(from: url)
-    else { return nil }
+    guard let url = components.url, let (data, _) = try? await session.data(from: url) else {
+      return nil
+    }
     if let single = try? decoder.decode(AmbeoEntry<E>.self, from: data) {
       stateCache[endpoint.path] = single
       return single.value
@@ -163,15 +157,11 @@ public actor AmbeoClient {
 
   private func updateState<V>(path: String, newValue: V) {
     latestValues[path] = newValue
-    if let updater = stateUpdaters[path] {
-      updater(newValue, &state)
-    }
+    if let updater = stateUpdaters[path] { updater(newValue, &state) }
   }
 
   /// Distinguishes values whose descriptions collide across types, such as `Int(1)` and `"1"`.
-  private func echoToken<V>(_ value: V) -> String {
-    "\(type(of: value)):\(value)"
-  }
+  private func echoToken<V>(_ value: V) -> String { "\(type(of: value)):\(value)" }
 
   private func notifyUpdate<V>(path: String, newValue: V) {
     updateState(path: path, newValue: newValue)
@@ -181,19 +171,14 @@ public actor AmbeoClient {
     let isEcho = expectedEchoValues[path]?.contains(valStr) == true
     if isEcho {
       expectedEchoValues[path]?.remove(valStr)
-      if expectedEchoValues[path]?.isEmpty == true {
-        expectedEchoValues.removeValue(forKey: path)
-      }
+      if expectedEchoValues[path]?.isEmpty == true { expectedEchoValues.removeValue(forKey: path) }
     }
     let isExternal = isInitialSyncCompleted && !isEcho
     DispatchQueue.main.async {
       NotificationCenter.default.post(
         name: .ambeoStatusDidChange,
         object: nil,
-        userInfo: [
-          "path": notifPath,
-          "isExternal": isExternal,
-        ]
+        userInfo: ["path": notifPath, "isExternal": isExternal]
       )
     }
   }
@@ -224,8 +209,7 @@ public actor AmbeoClient {
           components.host = host
           components.path = "/api/event/pollQueue"
           components.queryItems = [
-            URLQueryItem(name: "queueId", value: qId),
-            URLQueryItem(name: "timeout", value: "2000"),
+            URLQueryItem(name: "queueId", value: qId), URLQueryItem(name: "timeout", value: "2000"),
             URLQueryItem(
               name: "_nocache",
               value: String(Int64(Date().timeIntervalSince1970 * 1000))
@@ -276,8 +260,7 @@ public actor AmbeoClient {
       initComponents.host = host
       initComponents.path = "/api/event/modifyQueue"
       initComponents.queryItems = [
-        URLQueryItem(name: "queueId", value: ""),
-        URLQueryItem(name: "subscribe", value: "[]"),
+        URLQueryItem(name: "queueId", value: ""), URLQueryItem(name: "subscribe", value: "[]"),
         URLQueryItem(name: "unsubscribe", value: "[]"),
         URLQueryItem(name: "_nocache", value: nocache),
       ]
@@ -330,15 +313,12 @@ public actor AmbeoClient {
     for json in jsonArray {
       guard let path = json["path"] as? String,
         json["itemType"] == nil || json["itemType"] as? String == "update"
-          || json["rowsType"] as? String == "update",
-        let handler = updateHandlers[path]
+          || json["rowsType"] as? String == "update", let handler = updateHandlers[path]
       else { continue }
 
       let itemValueData: Data?
       if let itemValueDict = json["itemValue"] as? [String: Any] {
-        do {
-          itemValueData = try JSONSerialization.data(withJSONObject: itemValueDict)
-        } catch {
+        do { itemValueData = try JSONSerialization.data(withJSONObject: itemValueDict) } catch {
           Logger.network.warning(
             "Failed to serialize itemValue for [\(path)]: \(error.localizedDescription)"
           )
@@ -347,12 +327,8 @@ public actor AmbeoClient {
       } else {
         itemValueData = nil
       }
-      do {
-        try await handler(itemValueData)
-      } catch {
-        Logger.network.warning(
-          "Poll handler failed for [\(path)]: \(error.localizedDescription)"
-        )
+      do { try await handler(itemValueData) } catch {
+        Logger.network.warning("Poll handler failed for [\(path)]: \(error.localizedDescription)")
       }
     }
   }
@@ -397,8 +373,7 @@ public actor AmbeoClient {
     components.host = host
     components.path = "/api/setData"
     components.queryItems = [
-      URLQueryItem(name: "path", value: endpoint.path),
-      URLQueryItem(name: "role", value: role),
+      URLQueryItem(name: "path", value: endpoint.path), URLQueryItem(name: "role", value: role),
       URLQueryItem(name: "value", value: valueJSON),
       URLQueryItem(name: "_nocache", value: String(Int64(Date().timeIntervalSince1970 * 1000))),
     ]
@@ -451,8 +426,7 @@ public actor AmbeoClient {
     components.host = host
     components.path = "/api/setData"
     components.queryItems = [
-      URLQueryItem(name: "path", value: path),
-      URLQueryItem(name: "role", value: "activate"),
+      URLQueryItem(name: "path", value: path), URLQueryItem(name: "role", value: "activate"),
       URLQueryItem(name: "value", value: "{}"),
       URLQueryItem(name: "_nocache", value: String(Int64(Date().timeIntervalSince1970 * 1000))),
     ]

@@ -3,9 +3,7 @@ import SwiftUI
 
 // MARK: - Observable state shared with the SwiftUI view
 
-@Observable
-@MainActor
-final class VolumeOverlayState {
+@Observable @MainActor final class VolumeOverlayState {
   var volume: Double = 0
   var isMuted: Bool = false
   var isAmbeoMode: Bool = true
@@ -21,8 +19,7 @@ final class VolumeOverlayState {
 
 // MARK: - Manager (MainActor)
 
-@MainActor
-final class VolumeOverlayManager {
+@MainActor final class VolumeOverlayManager {
   private var panel: NSPanel?
   let state = VolumeOverlayState()
   private var dismissTask: Task<Void, Never>?
@@ -70,11 +67,7 @@ final class VolumeOverlayManager {
           p.animator().alphaValue = 0.0
         },
         completionHandler: {
-          MainActor.assumeIsolated {
-            if p.alphaValue == 0.0 {
-              p.orderOut(nil)
-            }
-          }
+          MainActor.assumeIsolated { if p.alphaValue == 0.0 { p.orderOut(nil) } }
         }
       )
     }
@@ -88,9 +81,7 @@ final class VolumeOverlayManager {
     guard let screen else { return }
     let sf = screen.visibleFrame
     let pf = panel.frame
-    panel.setFrameOrigin(
-      NSPoint(x: sf.midX - pf.width / 2, y: sf.midY - pf.height / 2)
-    )
+    panel.setFrameOrigin(NSPoint(x: sf.midX - pf.width / 2, y: sf.midY - pf.height / 2))
   }
 
   private func createPanel() {
@@ -173,18 +164,18 @@ struct VolumeOverlayView: View {
       // 2. Volume Slider & Icon
       VStack(spacing: 6) {
         HStack(spacing: 12) {
-          Image(systemName: iconName)
-            .font(.system(size: 20, weight: .light))
-            .foregroundStyle(.primary)
-            .frame(width: 24)
+          Image(systemName: iconName).font(.system(size: 20, weight: .light)).foregroundStyle(
+            .primary
+          ).frame(width: 24)
 
           volumeGaugeWithTicks
 
-          Text(state.isMuted ? "Muted" : "\(Int(state.volume * 100))%")
-            .font(.system(size: 13, weight: .semibold, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(state.isMuted ? .secondary : .primary)
-            .frame(width: 44, alignment: .trailing)
+          Text(state.isMuted ? "Muted" : "\(Int(state.volume * 100))%").font(
+            .system(size: 13, weight: .semibold, design: .rounded)
+          ).monospacedDigit().foregroundStyle(state.isMuted ? .secondary : .primary).frame(
+            width: 44,
+            alignment: .trailing
+          )
         }
       }
 
@@ -204,12 +195,7 @@ struct VolumeOverlayView: View {
           activeColor: .cyan
         )
 
-        statusPill(
-          icon: "leaf.fill",
-          title: "Eco",
-          isActive: state.isEcoMode,
-          activeColor: .green
-        )
+        statusPill(icon: "leaf.fill", title: "Eco", isActive: state.isEcoMode, activeColor: .green)
 
         statusPill(
           icon: "clock.badge.checkmark",
@@ -225,31 +211,22 @@ struct VolumeOverlayView: View {
           activeColor: .green
         )
       }
-    }
-    .padding(.vertical, 16)
-    .padding(.horizontal, 20)
-    .background {
-      RoundedRectangle(cornerRadius: 20, style: .continuous)
-        .fill(.ultraThinMaterial)
-        .overlay {
-          RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 8)
-    }
-    .frame(width: 320)
-    .animation(.smooth(duration: 0.25), value: state.isNightMode)
-    .animation(.smooth(duration: 0.25), value: state.isAmbeoMode)
-    .animation(.smooth(duration: 0.15), value: state.volume)
-    .animation(.smooth(duration: 0.15), value: state.isMuted)
-    .onChange(of: state.ambeoLevel) { _, _ in
-      triggerFlashAnimation()
-    }
-    .onChange(of: state.isAmbeoMode) { _, isAmbeo in
-      if isAmbeo {
-        triggerFlashAnimation()
-      }
-    }
+    }.padding(.vertical, 16).padding(.horizontal, 20).background {
+      RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.ultraThinMaterial).overlay {
+        RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(
+          Color.white.opacity(0.12),
+          lineWidth: 1
+        )
+      }.shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 8)
+    }.frame(width: 320).animation(.smooth(duration: 0.25), value: state.isNightMode).animation(
+      .smooth(duration: 0.25),
+      value: state.isAmbeoMode
+    ).animation(.smooth(duration: 0.15), value: state.volume).animation(
+      .smooth(duration: 0.15),
+      value: state.isMuted
+    ).onChange(of: state.ambeoLevel) { _, _ in triggerFlashAnimation() }.onChange(
+      of: state.isAmbeoMode
+    ) { _, isAmbeo in if isAmbeo { triggerFlashAnimation() } }
   }
 
   private func triggerFlashAnimation() {
@@ -257,13 +234,9 @@ struct VolumeOverlayView: View {
     let count = flashCount
     Task { @MainActor in
       for _ in 0..<count {
-        withAnimation(.easeOut(duration: 0.1)) {
-          flashOpacity = 0.2
-        }
+        withAnimation(.easeOut(duration: 0.1)) { flashOpacity = 0.2 }
         try? await Task.sleep(for: .milliseconds(110))
-        withAnimation(.easeIn(duration: 0.12)) {
-          flashOpacity = 1.0
-        }
+        withAnimation(.easeIn(duration: 0.12)) { flashOpacity = 1.0 }
         try? await Task.sleep(for: .milliseconds(130))
       }
     }
@@ -279,37 +252,23 @@ struct VolumeOverlayView: View {
 
       ZStack(alignment: .leading) {
         // Track Background
-        Capsule()
-          .fill(Color.white.opacity(0.12))
-          .frame(height: height)
+        Capsule().fill(Color.white.opacity(0.12)).frame(height: height)
 
         // Progress Fill
-        Capsule()
-          .fill(state.isMuted ? Color.secondary : activeLedColor)
-          .frame(width: max(0, width * progress), height: height)
-          .shadow(
-            color: state.isMuted ? .clear : activeLedColor.opacity(0.4),
-            radius: 3,
-            x: 0,
-            y: 0
-          )
+        Capsule().fill(state.isMuted ? Color.secondary : activeLedColor).frame(
+          width: max(0, width * progress),
+          height: height
+        ).shadow(color: state.isMuted ? .clear : activeLedColor.opacity(0.4), radius: 3, x: 0, y: 0)
 
         // Tick marks (every 25%: 0%, 25%, 50%, 75%, 100%)
         HStack {
           ForEach(0...4, id: \.self) { i in
-            if i > 0 {
-              Spacer()
-            }
-            Rectangle()
-              .fill(Color.white.opacity(0.35))
-              .frame(width: 1, height: height + 4)
+            if i > 0 { Spacer() }
+            Rectangle().fill(Color.white.opacity(0.35)).frame(width: 1, height: height + 4)
           }
-        }
-        .allowsHitTesting(false)
-      }
-      .frame(height: geo.size.height, alignment: .center)
-    }
-    .frame(height: 12)
+        }.allowsHitTesting(false)
+      }.frame(height: geo.size.height, alignment: .center)
+    }.frame(height: 12)
   }
 
   // MARK: - AMBEO LED Logo
@@ -319,18 +278,14 @@ struct VolumeOverlayView: View {
       // Left side: AMBEO logo & optional DOLBY ATMOS
       HStack(alignment: .center, spacing: 10) {
         // Product LED-style AMBEO text with brightness modulation and flash
-        Text("AMBΞO")
-          .font(.system(size: 17, weight: .heavy, design: .default))
-          .tracking(3.5)
-          .foregroundStyle(activeLedColor.opacity(logoBrightnessMultiplier * flashOpacity))
-          .shadow(
+        Text("AMBΞO").font(.system(size: 17, weight: .heavy, design: .default)).tracking(3.5)
+          .foregroundStyle(activeLedColor.opacity(logoBrightnessMultiplier * flashOpacity)).shadow(
             color: (state.isNightMode || state.isAmbeoMode)
               ? activeLedColor.opacity(0.9 * logoBrightnessMultiplier * flashOpacity) : .clear,
             radius: 6,
             x: 0,
             y: 0
-          )
-          .shadow(
+          ).shadow(
             color: (state.isNightMode || state.isAmbeoMode)
               ? activeLedColor.opacity(0.4 * logoBrightnessMultiplier * flashOpacity) : .clear,
             radius: 14,
@@ -338,10 +293,7 @@ struct VolumeOverlayView: View {
             y: 0
           )
 
-        if state.isAtmos {
-          dolbyAtmosBadge
-            .transition(.opacity)
-        }
+        if state.isAtmos { dolbyAtmosBadge.transition(.opacity) }
       }
 
       Spacer(minLength: 0)
@@ -349,101 +301,70 @@ struct VolumeOverlayView: View {
       // Right side: Preset (pinned to right so it doesn't shift when Atmos toggles)
       if let preset = state.audioPreset {
         HStack(spacing: 4) {
-          Image(systemName: presetIcon(preset.lowercased()))
-            .font(.system(size: 10, weight: .bold))
-          Text(preset.uppercased())
-            .font(.system(size: 10, weight: .heavy, design: .rounded))
+          Image(systemName: presetIcon(preset.lowercased())).font(.system(size: 10, weight: .bold))
+          Text(preset.uppercased()).font(.system(size: 10, weight: .heavy, design: .rounded))
             .tracking(0.8)
-        }
-        .foregroundStyle(activeLedColor)
-        .shadow(
+        }.foregroundStyle(activeLedColor).shadow(
           color: activeLedColor.opacity(0.8),
           radius: 5,
           x: 0,
           y: 0
-        )
-        .shadow(
-          color: activeLedColor.opacity(0.35),
-          radius: 10,
-          x: 0,
-          y: 0
-        )
+        ).shadow(color: activeLedColor.opacity(0.35), radius: 10, x: 0, y: 0)
       }
-    }
-    .padding(.bottom, 2)
+    }.padding(.bottom, 2)
   }
 
   // Custom Dolby Double-D icon + ATMOS text
   private var dolbyAtmosBadge: some View {
     HStack(spacing: 4.5) {
       dolbyDoubleDIcon
-      Text("ATMOS")
-        .font(.system(size: 10, weight: .heavy, design: .rounded))
-        .tracking(0.8)
-    }
-    .foregroundStyle(activeLedColor)
-    .shadow(
+      Text("ATMOS").font(.system(size: 10, weight: .heavy, design: .rounded)).tracking(0.8)
+    }.foregroundStyle(activeLedColor).shadow(
       color: activeLedColor.opacity(0.8),
       radius: 5,
       x: 0,
       y: 0
-    )
-    .shadow(
-      color: activeLedColor.opacity(0.35),
-      radius: 10,
-      x: 0,
-      y: 0
-    )
+    ).shadow(color: activeLedColor.opacity(0.35), radius: 10, x: 0, y: 0)
   }
 
   /// Official-style Dolby logo (two D shapes facing each other: Dᗡ)
   private var dolbyDoubleDIcon: some View {
     HStack(spacing: 1.5) {
       // Left D (standard D: flat back on left, curved belly on right facing inward)
-      Rectangle()
-        .fill(activeLedColor)
-        .frame(width: 5, height: 9)
-        .clipShape(
-          UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: 0,
-            bottomTrailingRadius: 3.5,
-            topTrailingRadius: 3.5
-          )
+      Rectangle().fill(activeLedColor).frame(width: 5, height: 9).clipShape(
+        UnevenRoundedRectangle(
+          topLeadingRadius: 0,
+          bottomLeadingRadius: 0,
+          bottomTrailingRadius: 3.5,
+          topTrailingRadius: 3.5
         )
-        .overlay {
-          // Hollow cut inside left D
-          UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: 0,
-            bottomTrailingRadius: 2,
-            topTrailingRadius: 2
-          )
-          .stroke(Color.black.opacity(0.6), lineWidth: 1.2)
-        }
+      ).overlay {
+        // Hollow cut inside left D
+        UnevenRoundedRectangle(
+          topLeadingRadius: 0,
+          bottomLeadingRadius: 0,
+          bottomTrailingRadius: 2,
+          topTrailingRadius: 2
+        ).stroke(Color.black.opacity(0.6), lineWidth: 1.2)
+      }
 
       // Right D (mirrored D: curved belly on left facing inward, flat back on right)
-      Rectangle()
-        .fill(activeLedColor)
-        .frame(width: 5, height: 9)
-        .clipShape(
-          UnevenRoundedRectangle(
-            topLeadingRadius: 3.5,
-            bottomLeadingRadius: 3.5,
-            bottomTrailingRadius: 0,
-            topTrailingRadius: 0
-          )
+      Rectangle().fill(activeLedColor).frame(width: 5, height: 9).clipShape(
+        UnevenRoundedRectangle(
+          topLeadingRadius: 3.5,
+          bottomLeadingRadius: 3.5,
+          bottomTrailingRadius: 0,
+          topTrailingRadius: 0
         )
-        .overlay {
-          // Hollow cut inside right D
-          UnevenRoundedRectangle(
-            topLeadingRadius: 2,
-            bottomLeadingRadius: 2,
-            bottomTrailingRadius: 0,
-            topTrailingRadius: 0
-          )
-          .stroke(Color.black.opacity(0.6), lineWidth: 1.2)
-        }
+      ).overlay {
+        // Hollow cut inside right D
+        UnevenRoundedRectangle(
+          topLeadingRadius: 2,
+          bottomLeadingRadius: 2,
+          bottomTrailingRadius: 0,
+          topTrailingRadius: 0
+        ).stroke(Color.black.opacity(0.6), lineWidth: 1.2)
+      }
     }
   }
 
@@ -467,22 +388,14 @@ struct VolumeOverlayView: View {
     activeColor: Color
   ) -> some View {
     HStack(spacing: 3.5) {
-      Image(systemName: icon)
-        .font(.system(size: 9, weight: .bold))
-      Text(title)
-        .font(.system(size: 9, weight: .semibold, design: .rounded))
-    }
-    .padding(.horizontal, 6)
-    .padding(.vertical, 4)
-    .foregroundStyle(isActive ? activeColor : Color.secondary.opacity(0.6))
-    .background {
-      Capsule()
-        .fill(isActive ? activeColor.opacity(0.15) : Color.white.opacity(0.05))
-        .overlay {
-          if isActive {
-            Capsule().strokeBorder(activeColor.opacity(0.35), lineWidth: 0.5)
-          }
-        }
+      Image(systemName: icon).font(.system(size: 9, weight: .bold))
+      Text(title).font(.system(size: 9, weight: .semibold, design: .rounded))
+    }.padding(.horizontal, 6).padding(.vertical, 4).foregroundStyle(
+      isActive ? activeColor : Color.secondary.opacity(0.6)
+    ).background {
+      Capsule().fill(isActive ? activeColor.opacity(0.15) : Color.white.opacity(0.05)).overlay {
+        if isActive { Capsule().strokeBorder(activeColor.opacity(0.35), lineWidth: 0.5) }
+      }
     }
   }
 

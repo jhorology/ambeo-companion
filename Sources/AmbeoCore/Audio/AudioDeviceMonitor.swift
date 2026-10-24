@@ -59,9 +59,7 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
     self.formatID = formatID
   }
 
-  enum CodingKeys: String, CodingKey {
-    case channels, bitDepth, sampleRate, formatID
-  }
+  enum CodingKeys: String, CodingKey { case channels, bitDepth, sampleRate, formatID }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,9 +72,7 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
 
   public var fourCCString: String {
     let bytes: [UInt8] = [
-      UInt8((formatID >> 24) & 0xFF),
-      UInt8((formatID >> 16) & 0xFF),
-      UInt8((formatID >> 8) & 0xFF),
+      UInt8((formatID >> 24) & 0xFF), UInt8((formatID >> 16) & 0xFF), UInt8((formatID >> 8) & 0xFF),
       UInt8(formatID & 0xFF),
     ]
     return bytes.map { b in
@@ -88,8 +84,7 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
     let hz = sampleRate / 1000.0
     let hzString =
       hz.truncatingRemainder(dividingBy: 1) == 0
-      ? String(format: "%.0f", hz)
-      : String(format: "%.1f", hz)
+      ? String(format: "%.0f", hz) : String(format: "%.1f", hz)
     if formatID == kAudioFormatLinearPCM {
       return "\(channels)ch \(bitDepth)-bit \(hzString)kHz"
     } else {
@@ -97,9 +92,7 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
     }
   }
 
-  public var distanceFrom48kHz: Double {
-    abs(sampleRate - 48000.0)
-  }
+  public var distanceFrom48kHz: Double { abs(sampleRate - 48000.0) }
 
   public var isAtmosOrMultichannel: Bool {
     channels > 2 || EncodedAudioFormatID.isEncodedSurround(formatID: formatID)
@@ -131,25 +124,12 @@ private enum EncodedAudioFormatID {
 
   static func isEncodedSurround(formatID: UInt32) -> Bool {
     switch formatID {
-    case dolbyEAC3CCPlus3,
-      dolbyEAC3CDPlus3,
-      enhancedAC3Internal,
-      dolbyMATInternalA,
-      dolbyMATInternalB,
-      dolbyMATInternalC,
-      dolbyMATPlusInternalB,
-      dolbyMATPlusInternalC,
-      enhancedAC3,
-      enhancedAC3JOC,
-      dolbyDigital,
-      dolbyDigital60958,
-      dolbyMATStandard,
-      dolbyMATPlusStandard,
-      trueHD,
-      legacyCEA3:
+    case dolbyEAC3CCPlus3, dolbyEAC3CDPlus3, enhancedAC3Internal, dolbyMATInternalA,
+      dolbyMATInternalB, dolbyMATInternalC, dolbyMATPlusInternalB, dolbyMATPlusInternalC,
+      enhancedAC3, enhancedAC3JOC, dolbyDigital, dolbyDigital60958, dolbyMATStandard,
+      dolbyMATPlusStandard, trueHD, legacyCEA3:
       return true
-    default:
-      return false
+    default: return false
     }
   }
 
@@ -239,10 +219,7 @@ public final class AudioDeviceMonitor: Sendable {
         weak var monitor: AudioDeviceMonitor?
         let continuation: AsyncStream<[AudioDevice]>.Continuation
 
-        init(
-          monitor: AudioDeviceMonitor,
-          continuation: AsyncStream<[AudioDevice]>.Continuation
-        ) {
+        init(monitor: AudioDeviceMonitor, continuation: AsyncStream<[AudioDevice]>.Continuation) {
           self.monitor = monitor
           self.continuation = continuation
         }
@@ -331,8 +308,7 @@ public final class AudioDeviceMonitor: Sendable {
 
   public func checkHogged(for id: AudioDeviceID) -> Bool {
     let isHogged =
-      property(for: id, selector: kAudioDevicePropertyHogMode, type: pid_t.self).first ?? -1
-      != -1
+      property(for: id, selector: kAudioDevicePropertyHogMode, type: pid_t.self).first ?? -1 != -1
     return isHogged
   }
 
@@ -442,11 +418,7 @@ public final class AudioDeviceMonitor: Sendable {
         }
       }
 
-      let context = StreamContext(
-        monitor: self,
-        deviceId: id,
-        continuation: continuation
-      )
+      let context = StreamContext(monitor: self, deviceId: id, continuation: continuation)
       let bridge = Unmanaged.passRetained(context).toOpaque()
       nonisolated(unsafe) let safeBridge = bridge
 
@@ -465,12 +437,7 @@ public final class AudioDeviceMonitor: Sendable {
       )
 
       var mutableAddress = address
-      AudioObjectAddPropertyListener(
-        streamId,
-        &mutableAddress,
-        listener,
-        safeBridge
-      )
+      AudioObjectAddPropertyListener(streamId, &mutableAddress, listener, safeBridge)
 
       continuation.yield(self.currentPhysicalFormat(for: id))
 
@@ -480,12 +447,7 @@ public final class AudioDeviceMonitor: Sendable {
         // same lock, so removing here deadlocks. Remove off the cancelling thread instead.
         Self.listenerTeardownQueue.async {
           var addr = address
-          AudioObjectRemovePropertyListener(
-            streamId,
-            &addr,
-            listener,
-            safeBridge
-          )
+          AudioObjectRemovePropertyListener(streamId, &addr, listener, safeBridge)
           Unmanaged<StreamContext>.fromOpaque(safeBridge).release()
         }
       }
@@ -519,10 +481,8 @@ public final class AudioDeviceMonitor: Sendable {
       type: AudioStreamRangedDescription.self
     ).map(\.mFormat)
     if let match = available.first(where: {
-      $0.mFormatID == format.formatID
-        && $0.mChannelsPerFrame == format.channels
-        && $0.mBitsPerChannel == format.bitDepth
-        && $0.mSampleRate == format.sampleRate
+      $0.mFormatID == format.formatID && $0.mChannelsPerFrame == format.channels
+        && $0.mBitsPerChannel == format.bitDepth && $0.mSampleRate == format.sampleRate
     }) {
       asbd = match
     } else {
@@ -539,14 +499,7 @@ public final class AudioDeviceMonitor: Sendable {
       asbd.mBytesPerPacket = asbd.mBytesPerFrame * asbd.mFramesPerPacket
     }
 
-    let setStatus = AudioObjectSetPropertyData(
-      streamId,
-      &address,
-      0,
-      nil,
-      size,
-      &asbd
-    )
+    let setStatus = AudioObjectSetPropertyData(streamId, &address, 0, nil, size, &asbd)
 
     if setStatus == noErr {
       Logger.audio.info("Successfully forced fallback: \(format.displayName)")

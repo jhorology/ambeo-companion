@@ -10,8 +10,7 @@ let srcResources = "Sources/\(appName)/Resources"
 
 let fm = FileManager.default
 
-@discardableResult
-func shell(_ args: String...) -> Int32 {
+@discardableResult func shell(_ args: String...) -> Int32 {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
   process.arguments = args
@@ -34,18 +33,14 @@ if buildStatus != 0 {
 }
 
 func safeCopy(from: String, to: String) {
-  do {
-    try fm.copyItem(atPath: from, toPath: to)
-  } catch {
+  do { try fm.copyItem(atPath: from, toPath: to) } catch {
     print("❌ Failed to copy \(from) to \(to): \(error)")
     exit(1)
   }
 }
 
 func safeCreateDir(at: String) {
-  do {
-    try fm.createDirectory(atPath: at, withIntermediateDirectories: true)
-  } catch {
+  do { try fm.createDirectory(atPath: at, withIntermediateDirectories: true) } catch {
     print("❌ Failed to create directory \(at): \(error)")
     exit(1)
   }

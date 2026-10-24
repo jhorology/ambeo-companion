@@ -14,8 +14,7 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
     case .accessibility:
       if #available(macOS 27, *) { return "Device Control and Data Access" }
       return "Accessibility"
-    case .musicAutomation:
-      return "Automation (Music.app)"
+    case .musicAutomation: return "Automation (Music.app)"
     }
   }
 
@@ -32,18 +31,16 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
 
   var isGranted: Bool {
     switch self {
-    case .accessibility:
-      return AXIsProcessTrusted()
+    case .accessibility: return AXIsProcessTrusted()
     case .musicAutomation:
       return MusicPlayerController.shared.permissionStatus(askUserIfNeeded: false).isGranted
     }
   }
 
-  @MainActor
-  func requestAndOpenSettings(onComplete: (@MainActor @Sendable () async -> Void)? = nil) {
+  @MainActor func requestAndOpenSettings(onComplete: (@MainActor @Sendable () async -> Void)? = nil)
+  {
     switch self {
-    case .accessibility:
-      Self.openSystemSettings(anchor: "Privacy_Accessibility")
+    case .accessibility: Self.openSystemSettings(anchor: "Privacy_Accessibility")
 
     case .musicAutomation:
       Task { @MainActor in
@@ -62,12 +59,8 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
     }
   }
 
-  @MainActor
-  private static func openSystemSettings(anchor: String) {
-    for pane in [
-      "com.apple.settings.PrivacySecurity.extension",
-      "com.apple.preference.security",
-    ] {
+  @MainActor private static func openSystemSettings(anchor: String) {
+    for pane in ["com.apple.settings.PrivacySecurity.extension", "com.apple.preference.security"] {
       if let url = URL(string: "x-apple.systempreferences:\(pane)?\(anchor)"),
         NSWorkspace.shared.open(url)
       {
@@ -83,9 +76,7 @@ struct MediaKeyPermissions: Equatable {
 
   var mediaKeysGranted: Bool { accessibility }
 
-  var allGranted: Bool {
-    accessibility && musicAutomation == .granted
-  }
+  var allGranted: Bool { accessibility && musicAutomation == .granted }
 
   func isGranted(_ permission: MediaKeyPermission) -> Bool {
     switch permission {
@@ -96,16 +87,12 @@ struct MediaKeyPermissions: Equatable {
 
   func statusLabel(for permission: MediaKeyPermission) -> String {
     switch permission {
-    case .accessibility:
-      return isGranted(permission) ? "Allowed" : "Permission Needed"
+    case .accessibility: return isGranted(permission) ? "Allowed" : "Permission Needed"
     case .musicAutomation:
       switch musicAutomation {
-      case .granted:
-        return "Allowed"
-      case .musicNotRunning:
-        return "Music.app Not Running"
-      case .notDetermined, .denied:
-        return "Permission Needed"
+      case .granted: return "Allowed"
+      case .musicNotRunning: return "Music.app Not Running"
+      case .notDetermined, .denied: return "Permission Needed"
       }
     }
   }
@@ -116,26 +103,20 @@ struct MediaKeyPermissions: Equatable {
       return isGranted(permission) ? "checkmark.circle.fill" : "exclamationmark.circle"
     case .musicAutomation:
       switch musicAutomation {
-      case .granted:
-        return "checkmark.circle.fill"
-      case .musicNotRunning:
-        return "music.note"
-      case .notDetermined, .denied:
-        return "exclamationmark.circle"
+      case .granted: return "checkmark.circle.fill"
+      case .musicNotRunning: return "music.note"
+      case .notDetermined, .denied: return "exclamationmark.circle"
       }
     }
   }
 
   func actionTitle(for permission: MediaKeyPermission) -> String {
     switch permission {
-    case .accessibility:
-      return "Open Settings"
+    case .accessibility: return "Open Settings"
     case .musicAutomation:
       switch musicAutomation {
-      case .granted, .denied:
-        return "Open Settings"
-      case .notDetermined, .musicNotRunning:
-        return "Allow Access"
+      case .granted, .denied: return "Open Settings"
+      case .notDetermined, .musicNotRunning: return "Allow Access"
       }
     }
   }

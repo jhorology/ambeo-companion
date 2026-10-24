@@ -7,9 +7,7 @@ public protocol AmbeoEndpointProtocol: Sendable {
   func apply(_ value: Payload, to state: inout AmbeoState)
 }
 
-public struct NoEdit: Decodable, Sendable {
-  public init() {}
-}
+public struct NoEdit: Decodable, Sendable { public init() {} }
 
 public enum AmbeoEndpoint {
   public enum Player {
@@ -52,16 +50,12 @@ public enum AmbeoEndpoint {
         "adaptive", "music", "movie", "news", "neutral", "sports",
       ]
 
-      public struct Edit: Decodable, Sendable {
-        public let enumPath: String?
-      }
+      public struct Edit: Decodable, Sendable { public let enumPath: String? }
 
       public init() {}
       public func apply(_ value: Payload, to state: inout AmbeoState) {
         state.preset = value
-        if let level = state.ambeoLevels[value.lowercased()] {
-          state.ambeoLevel = level
-        }
+        if let level = state.ambeoLevels[value.lowercased()] { state.ambeoLevel = level }
       }
     }
 
@@ -87,9 +81,7 @@ public enum AmbeoEndpoint {
       public func apply(_ value: Payload, to state: inout AmbeoState) {
         let presetName = self.preset.lowercased()
         state.ambeoLevels[presetName] = value
-        if state.preset.lowercased() == presetName {
-          state.ambeoLevel = value
-        }
+        if state.preset.lowercased() == presetName { state.ambeoLevel = value }
       }
     }
 

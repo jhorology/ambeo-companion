@@ -10,13 +10,9 @@ public struct SennheiserNetworkDevice: Sendable, Identifiable, Hashable, Codable
   public let ip: String  // ipv4 address
 
   init?(withDict dict: [String: String]) {
-    guard let uuid = dict["uuid"],
-      let serial = dict["serial"],
-      let name = dict["name"],
+    guard let uuid = dict["uuid"], let serial = dict["serial"], let name = dict["name"],
       let ip = dict["ip"]
-    else {
-      return nil
-    }
+    else { return nil }
     self.uuid = uuid
     self.serial = serial
     self.name = name

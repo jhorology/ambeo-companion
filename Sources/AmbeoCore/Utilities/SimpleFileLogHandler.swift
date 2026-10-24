@@ -1,8 +1,7 @@
 import Foundation
 import Logging
 
-@_silgen_name("swift_demangle")
-public func _stdlib_demangle(
+@_silgen_name("swift_demangle") public func _stdlib_demangle(
   mangledName: UnsafePointer<Int8>?,
   mangledNameLength: Int,
   outputBuffer: UnsafeMutablePointer<Int8>?,
@@ -34,21 +33,14 @@ public struct SimpleFileLogHandler: LogHandler {
   private let logFileURL: URL
   private let config: SimpleFileLogConfig
 
-  public init(
-    label: String,
-    fileURL: URL,
-    config: SimpleFileLogConfig = .default
-  ) {
+  public init(label: String, fileURL: URL, config: SimpleFileLogConfig = .default) {
     self.label = label
     self.logFileURL = fileURL
     self.config = config
     self.logLevel = config.logLevel
 
     let dir = fileURL.deletingLastPathComponent()
-    try? FileManager.default.createDirectory(
-      at: dir,
-      withIntermediateDirectories: true
-    )
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   }
 
   public func log(event: Logging.LogEvent) {
@@ -62,25 +54,18 @@ public struct SimpleFileLogHandler: LogHandler {
     let category = label.components(separatedBy: ".").last ?? label
     let fileName = (file as NSString).lastPathComponent
 
-    let threadID = UnsafeMutableRawPointer(
-      bitPattern: Int(pthread_mach_thread_np(pthread_self()))
-    )!
+    let threadID = UnsafeMutableRawPointer(bitPattern: Int(pthread_mach_thread_np(pthread_self())))!
     let threadName = Thread.isMainThread ? "main" : "thread-\(threadID)"
 
     let allMetadata = self.metadata.merging(metadata ?? [:]) { (_, new) in new }
     let metaString =
       allMetadata.isEmpty
-      ? ""
-      : " 🏷️ [\(allMetadata.map { "\($0.key): \($0.value)" }.joined(separator: ", "))]"
+      ? "" : " 🏷️ [\(allMetadata.map { "\($0.key): \($0.value)" }.joined(separator: ", "))]"
 
     var stackString = ""
     if config.isStackTraceEnabled && level >= .error {
-      let symbols = Thread.callStackSymbols
-        .dropFirst(5)
-        .prefix(10)
-        .map { demangle(symbol: $0) }
-      stackString =
-        "\n   📌 Stack Trace:\n   " + symbols.joined(separator: "\n   ")
+      let symbols = Thread.callStackSymbols.dropFirst(5).prefix(10).map { demangle(symbol: $0) }
+      stackString = "\n   📌 Stack Trace:\n   " + symbols.joined(separator: "\n   ")
     }
 
     let levelTag = "[\(level.rawValue.uppercased())]"
@@ -100,9 +85,7 @@ public struct SimpleFileLogHandler: LogHandler {
 
   private func demangle(symbol: String) -> String {
     let parts = symbol.components(separatedBy: " ")
-    guard let mangled = parts.first(where: { $0.hasPrefix("$s") }) else {
-      return symbol
-    }
+    guard let mangled = parts.first(where: { $0.hasPrefix("$s") }) else { return symbol }
     let ptr = _stdlib_demangle(
       mangledName: mangled,
       mangledNameLength: mangled.utf8.count,
@@ -137,9 +120,7 @@ public struct SimpleFileLogHandler: LogHandler {
     if let existing = store.handles[key] {
       fileHandle = existing
     } else {
-      if !fm.fileExists(atPath: key) {
-        fm.createFile(atPath: key, contents: nil)
-      }
+      if !fm.fileExists(atPath: key) { fm.createFile(atPath: key, contents: nil) }
       guard let opened = try? FileHandle(forWritingTo: logFileURL) else {
         try? data.write(to: logFileURL)
         return
@@ -161,8 +142,7 @@ public struct SimpleFileLogHandler: LogHandler {
 
   private func rotateFiles(fm: FileManager) {
     for i in (1...config.maxBackupCount).reversed() {
-      let src =
-        i == 1 ? logFileURL : logFileURL.appendingPathExtension("\(i-1)")
+      let src = i == 1 ? logFileURL : logFileURL.appendingPathExtension("\(i-1)")
       let dst = logFileURL.appendingPathExtension("\(i)")
       if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
       if fm.fileExists(atPath: src.path) { try? fm.moveItem(at: src, to: dst) }
@@ -184,12 +164,7 @@ public struct SimpleFileLogHandler: LogHandler {
 
   private func getEmoji(_ level: Logger.Level) -> String {
     let mapping: [Logger.Level: String] = [
-      .trace: "🔍",
-      .debug: "⚙️",
-      .info: "💎",
-      .notice: "🔔",
-      .warning: "⚠️",
-      .error: "🚫",
+      .trace: "🔍", .debug: "⚙️", .info: "💎", .notice: "🔔", .warning: "⚠️", .error: "🚫",
       .critical: "🔥",
     ]
     return mapping[level] ?? "📝"
@@ -197,12 +172,8 @@ public struct SimpleFileLogHandler: LogHandler {
 
   private func getColor(_ level: Logger.Level) -> String {
     let colors: [Logger.Level: String] = [
-      .trace: "\u{001B}[38;5;245m",
-      .debug: "\u{001B}[34m",
-      .info: "\u{001B}[32m",
-      .notice: "\u{001B}[36m",
-      .warning: "\u{001B}[33m",
-      .error: "\u{001B}[31m",
+      .trace: "\u{001B}[38;5;245m", .debug: "\u{001B}[34m", .info: "\u{001B}[32m",
+      .notice: "\u{001B}[36m", .warning: "\u{001B}[33m", .error: "\u{001B}[31m",
       .critical: "\u{001B}[41;37m",
     ]
     return colors[level] ?? ""

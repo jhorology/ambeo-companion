@@ -73,8 +73,7 @@ extension SystemEvent {
       } else {
         self.type = .unknown(subtype: 8)
       }
-    default:
-      self.type = .unknown(subtype: Int16(event.subtype.rawValue))
+    default: self.type = .unknown(subtype: Int16(event.subtype.rawValue))
     }
   }
 }
@@ -101,9 +100,7 @@ public struct SystemEventMonitor {
 
     // Cancellation can run on the main actor. Only change a flag here: stopping a
     // run loop synchronously can wait for a callback blocked inside WindowServer.
-    func stop() {
-      lock.withLock { stopped = true }
-    }
+    func stop() { lock.withLock { stopped = true } }
 
     func handleDisabledEvent(_ type: CGEventType) {
       switch type {
@@ -114,8 +111,7 @@ public struct SystemEventMonitor {
       case .tapDisabledByTimeout:
         // Defer WindowServer calls until the callback has returned.
         lock.withLock { needsReenable = true }
-      default:
-        break
+      default: break
       }
     }
 
@@ -162,9 +158,7 @@ public struct SystemEventMonitor {
       // destruction. A TCC/WindowServer stall must not block the UI actor.
       let thread = Thread {
         defer { continuation.finish() }
-        guard !context.isStopped, AXIsProcessTrusted() else {
-          return
-        }
+        guard !context.isStopped, AXIsProcessTrusted() else { return }
         let bridge = Unmanaged.passRetained(context).toOpaque()
         defer { Unmanaged<Context>.fromOpaque(bridge).release() }
         guard
@@ -195,9 +189,7 @@ public struct SystemEventMonitor {
             context.stop()
             break
           }
-          if context.takeReenableRequest() {
-            CGEvent.tapEnable(tap: eventTap, enable: true)
-          }
+          if context.takeReenableRequest() { CGEvent.tapEnable(tap: eventTap, enable: true) }
           if CFRunLoopRunInMode(.defaultMode, 0.25, false) == .finished { break }
         }
       }

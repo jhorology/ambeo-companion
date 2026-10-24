@@ -11,9 +11,7 @@ extension Logger {
 
 public enum LogManager {
   private static func logFileURL(_ bundleId: String?) -> URL {
-    if let override = ProcessInfo.processInfo.environment["AMBEO_LOG_FILE"],
-      !override.isEmpty
-    {
+    if let override = ProcessInfo.processInfo.environment["AMBEO_LOG_FILE"], !override.isEmpty {
       return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
     }
     #if DEBUG
@@ -23,8 +21,7 @@ public enum LogManager {
       .deletingLastPathComponent()  // <project>/Sources/AmbeoCore
       .deletingLastPathComponent()  // <project>/Sources
       .deletingLastPathComponent()  // <project>
-      .appendingPathComponent("Logs")
-      .appendingPathComponent("ambeo-companion.log")
+      .appendingPathComponent("Logs").appendingPathComponent("ambeo-companion.log")
     #else
     // ~/Library/Logs/<Bundle ID>/ambeo-companion.log
     let bid = bundleId ?? Bundle.main.bundleIdentifier ?? "io.github.jhorology.AmbeoCompanion"
@@ -63,9 +60,7 @@ public enum LogManager {
 
   public static func setup(bid bundleId: String = "io.github.jhorology.ambeo-companion.dev") {
     let url = logFileURL(bundleId)
-    LoggingSystem.bootstrap {
-      SimpleFileLogHandler(label: $0, fileURL: url, config: config)
-    }
+    LoggingSystem.bootstrap { SimpleFileLogHandler(label: $0, fileURL: url, config: config) }
     Logger.lifecycle.info("Logger initialized  with Bundle ID:\(bundleId)")
   }
 }

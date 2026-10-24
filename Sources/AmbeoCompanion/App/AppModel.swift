@@ -41,9 +41,7 @@ struct AppSettings: Codable {
   }
 }
 
-@Observable
-@MainActor
-final class AppModel: Sendable {
+@Observable @MainActor final class AppModel: Sendable {
   static weak var runningInstance: AppModel?
   private let storageKey = "\(Bundle.id).Setting"
   private let hookedKeys: [SystemEvent.MediaKey] = [.soundUp, .soundDown, .mute]
@@ -81,9 +79,7 @@ final class AppModel: Sendable {
   private let boostLedger = AtmosBoostLedger(key: "\(Bundle.id).AtmosBoostLedger")
   private var appliedAtmosBoost: Int {
     get { boostLedger.amount(for: connectedUid) }
-    set {
-      boostLedger.record(newValue, for: connectedUid)
-    }
+    set { boostLedger.record(newValue, for: connectedUid) }
   }
   private var atmosDeactivationTask: Task<Void, Never>?
   private var atmosTransitionTask: Task<Void, Never>?
@@ -92,9 +88,7 @@ final class AppModel: Sendable {
   var settings: AppSettings {
     didSet {
       debouncedSaveSettings()
-      if settings.ambeoUid != oldValue.ambeoUid {
-        reconnectAmbeoClient()
-      }
+      if settings.ambeoUid != oldValue.ambeoUid { reconnectAmbeoClient() }
       if settings.audioDeviceUid != oldValue.audioDeviceUid {
         startMonitoringAudioDevice()
         restartSystemEventMonitorIfNeeded()
@@ -136,9 +130,7 @@ final class AppModel: Sendable {
       if settings.autoStandbySeconds != oldValue.autoStandbySeconds,
         settings.autoStandbySeconds != maxIdleTime
       {
-        Task { [weak self] in
-          await self?.syncAutoStandbyToSoundbar()
-        }
+        Task { [weak self] in await self?.syncAutoStandbyToSoundbar() }
       }
     }
   }
@@ -159,9 +151,7 @@ final class AppModel: Sendable {
   var launchAtLoginState: Bool = false
 
   var isLaunchAtLoginEnabled: Bool {
-    get {
-      launchAtLoginState
-    }
+    get { launchAtLoginState }
     set {
       launchAtLoginState = newValue
       setLaunchAtLogin(enabled: newValue)
@@ -207,9 +197,7 @@ final class AppModel: Sendable {
     checkLaunchAtLoginStatus()
     startDiscoveringAmbeo()
     startMonitoringAudioDevice()
-    if settings.mediaKeyEnabled {
-      startMonitoringSystemEvent()
-    }
+    if settings.mediaKeyEnabled { startMonitoringSystemEvent() }
     monitoringPermissionsTask = Task { [weak self] in
       while !Task.isCancelled {
         do { try await Task.sleep(for: .seconds(2)) } catch { return }
@@ -224,9 +212,7 @@ final class AppModel: Sendable {
   // MARK: - Launch at Login
 
   func checkLaunchAtLoginStatus() {
-    if #available(macOS 13.0, *) {
-      launchAtLoginState = (SMAppService.mainApp.status == .enabled)
-    }
+    if #available(macOS 13.0, *) { launchAtLoginState = (SMAppService.mainApp.status == .enabled) }
   }
 
   func setLaunchAtLogin(enabled: Bool) {
@@ -284,9 +270,7 @@ final class AppModel: Sendable {
       await self.stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(reason: "client reconnect")
       await previousClient?.stopObserving()
       await previousTransition?.value
-      if self.disconnectingClient === previousClient {
-        self.disconnectingClient = nil
-      }
+      if self.disconnectingClient === previousClient { self.disconnectingClient = nil }
       guard !Task.isCancelled, generation == self.clientGeneration else { return }
       if uid != self.connectedUid, let previousClient {
         await self.revertOutstandingBoost(using: previousClient)
@@ -383,8 +367,7 @@ final class AppModel: Sendable {
       try? await Task.sleep(for: .seconds(3))
       guard !Task.isCancelled, let self else { return }
       guard let device = self.networkDevices.first(where: { $0.uuid == self.settings.ambeoUid }),
-        let host = await self.ambeoClient?.host,
-        host != device.ip
+        let host = await self.ambeoClient?.host, host != device.ip
       else { return }
       Logger.network.info("Soundbar IP changed (\(host) -> \(device.ip)). Reconnecting.")
       self.reconnectAmbeoClient()
@@ -412,8 +395,7 @@ final class AppModel: Sendable {
 
         self.updateFormatMonitoringForActiveDevice()
 
-        guard let curDev = device,
-          curDev.uid == self.settings.audioDeviceUid,
+        guard let curDev = device, curDev.uid == self.settings.audioDeviceUid,
           !self.settings.fallbackAudioFormatID.isEmpty
         else { continue }
 
@@ -458,8 +440,8 @@ final class AppModel: Sendable {
     // another app plays a sound. With a target device set, the source is unchanged, so keep the
     // existing stream instead of tearing it down on every switch.
     let streamID = AudioDeviceMonitor.shared.outputStreamID(for: device.id)
-    if let source = monitoredFormatSource, let streamID,
-      source.device == device.id, source.stream == streamID, monitoringFormatTask != nil
+    if let source = monitoredFormatSource, let streamID, source.device == device.id,
+      source.stream == streamID, monitoringFormatTask != nil
     {
       return
     }
@@ -498,9 +480,7 @@ final class AppModel: Sendable {
     self.evaluateAtmosState(coreAudioAtmos: isAtmos)
 
     // If switching from Atmos/multichannel back to stereo, enforce fallback format
-    if wasAtmos && !isAtmos {
-      self.applyFallbackFormatIfNeeded(for: device)
-    }
+    if wasAtmos && !isAtmos { self.applyFallbackFormatIfNeeded(for: device) }
   }
 
   private func applyFallbackFormatIfNeeded(for device: AudioDevice) {
@@ -538,9 +518,7 @@ final class AppModel: Sendable {
   private func restartSystemEventMonitorIfNeeded() {
     monitoringSystemEventTask?.cancel()
     monitoringSystemEventTask = nil
-    if settings.mediaKeyEnabled {
-      startMonitoringSystemEvent()
-    }
+    if settings.mediaKeyEnabled { startMonitoringSystemEvent() }
   }
 
   func startMonitoringSystemEvent() {
@@ -556,15 +534,12 @@ final class AppModel: Sendable {
 
     monitoringSystemEventTask = Task {
       let stream = SystemEventMonitor.events(shouldIntercept: { ev in
-        guard ev.isDown,
-          case .media(let key) = ev.type,
-          hookedKeys.contains(key),
+        guard ev.isDown, case .media(let key) = ev.type, hookedKeys.contains(key),
           !audioDeviceUid.isEmpty,
           let device = AudioDeviceMonitor.shared.audioDevice(withUid: audioDeviceUid)
         else { return false }
 
-        if let curDev = AudioDeviceMonitor.shared.currentDefaultDevice,
-          curDev.uid == audioDeviceUid
+        if let curDev = AudioDeviceMonitor.shared.currentDefaultDevice, curDev.uid == audioDeviceUid
         {
           return true
         }
@@ -655,8 +630,7 @@ final class AppModel: Sendable {
       }
       await syncAndShowOverlay(explicitVolume: pct, explicitMute: false)
 
-    default:
-      break
+    default: break
     }
   }
 
@@ -700,12 +674,9 @@ final class AppModel: Sendable {
         let activeAmbeoLevelPath =
           "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(currentPreset)"
         let osdEligiblePaths: Set<String> = [
-          AmbeoEndpoint.Player.Volume().path,
-          AmbeoEndpoint.Player.Mute().path,
-          AmbeoEndpoint.Audio.Preset().path,
-          AmbeoEndpoint.Audio.AmbeoMode().path,
-          AmbeoEndpoint.Audio.NightMode().path,
-          AmbeoEndpoint.Audio.VoiceEnhancement().path,
+          AmbeoEndpoint.Player.Volume().path, AmbeoEndpoint.Player.Mute().path,
+          AmbeoEndpoint.Audio.Preset().path, AmbeoEndpoint.Audio.AmbeoMode().path,
+          AmbeoEndpoint.Audio.NightMode().path, AmbeoEndpoint.Audio.VoiceEnhancement().path,
           activeAmbeoLevelPath,
         ]
 
@@ -882,9 +853,7 @@ final class AppModel: Sendable {
     let uid = connectedUid
     let boost = boostLedger.amount(for: uid)
     guard boost > 0 else { return }
-    do {
-      if try await client.removeVolumeBoost(boost) { boostLedger.record(0, for: uid) }
-    } catch {
+    do { if try await client.removeVolumeBoost(boost) { boostLedger.record(0, for: uid) } } catch {
       Logger.audio.warning(
         "Boost cleanup failed: \(error.localizedDescription). Preserving device ledger."
       )
@@ -927,9 +896,7 @@ final class AppModel: Sendable {
         await self.refreshMediaKeyPermissions()
         if self.settings.mediaKeyEnabled { self.startMonitoringSystemEvent() }
         // Reconnect client if configured
-        if self.ambeoClient == nil, !self.settings.ambeoUid.isEmpty {
-          self.reconnectAmbeoClient()
-        }
+        if self.ambeoClient == nil, !self.settings.ambeoUid.isEmpty { self.reconnectAmbeoClient() }
         Logger.lifecycle.info("Wake from sleep")
       }
     }
@@ -1042,39 +1009,27 @@ final class AppModel: Sendable {
 
   private func setupKeyboardShortcuts() {
     KeyboardShortcuts.onKeyDown(for: .toggleAmbeoMode) { [weak self] in
-      Task { @MainActor in
-        await self?.toggleAmbeoMode()
-      }
+      Task { @MainActor in await self?.toggleAmbeoMode() }
     }
 
     KeyboardShortcuts.onKeyDown(for: .cycleAmbeoLevel) { [weak self] in
-      Task { @MainActor in
-        await self?.cycleAmbeoLevel()
-      }
+      Task { @MainActor in await self?.cycleAmbeoLevel() }
     }
 
     KeyboardShortcuts.onKeyDown(for: .cyclePreset) { [weak self] in
-      Task { @MainActor in
-        await self?.cyclePreset()
-      }
+      Task { @MainActor in await self?.cyclePreset() }
     }
 
     KeyboardShortcuts.onKeyDown(for: .toggleNightMode) { [weak self] in
-      Task { @MainActor in
-        await self?.toggleNightMode()
-      }
+      Task { @MainActor in await self?.toggleNightMode() }
     }
 
     KeyboardShortcuts.onKeyDown(for: .toggleVoiceEnhancement) { [weak self] in
-      Task { @MainActor in
-        await self?.toggleVoiceEnhancement()
-      }
+      Task { @MainActor in await self?.toggleVoiceEnhancement() }
     }
 
     KeyboardShortcuts.onKeyDown(for: .wakeUpSoundbar) { [weak self] in
-      Task { @MainActor in
-        await self?.wakeUpSoundbar()
-      }
+      Task { @MainActor in await self?.wakeUpSoundbar() }
     }
   }
 
@@ -1192,9 +1147,7 @@ final class AppModel: Sendable {
         valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newVoice)}"
       )
     } catch {
-      Logger.audio.warning(
-        "Failed to set Voice Enhancement (\(error.localizedDescription))"
-      )
+      Logger.audio.warning("Failed to set Voice Enhancement (\(error.localizedDescription))")
       return
     }
     Logger.audio.info("Voice Enhancement -> \(newVoice)")
@@ -1229,8 +1182,6 @@ final class AppModel: Sendable {
         applyFallbackFormatIfNeeded(for: curDev)
       }
       await syncAndShowOverlay()
-    } catch {
-      Logger.lifecycle.error("Failed to awake soundbar: \(error.localizedDescription)")
-    }
+    } catch { Logger.lifecycle.error("Failed to awake soundbar: \(error.localizedDescription)") }
   }
 }

@@ -15,9 +15,7 @@ struct SettingsView: View {
     Binding(
       get: { appModel.settings.audioDeviceUid },
       set: { newValue in
-        if newValue.isEmpty, !appModel.settings.audioDeviceUid.isEmpty {
-          return
-        }
+        if newValue.isEmpty, !appModel.settings.audioDeviceUid.isEmpty { return }
         appModel.settings.audioDeviceUid = newValue
       }
     )
@@ -42,11 +40,8 @@ struct SettingsView: View {
               // Selected device is temporarily missing from mDNS results
               Text("Searching...").tag(model.settings.ambeoUid)
             }
-            ForEach(appModel.networkDevices) { device in
-              Text(device.name).tag(device.uuid)
-            }
-          }
-          .labelsHidden()
+            ForEach(appModel.networkDevices) { device in Text(device.name).tag(device.uuid) }
+          }.labelsHidden()
         }
       } header: {
         Text("Network Device")
@@ -67,14 +62,10 @@ struct SettingsView: View {
             }) {
               Text("Not Connected").tag(model.settings.audioDeviceUid)
             }
-            ForEach(availableAudioDevices) { device in
-              Text(device.name).tag(device.uid)
-            }
-          }
-          .onChange(of: model.settings.audioDeviceUid) { _, newUID in
+            ForEach(availableAudioDevices) { device in Text(device.name).tag(device.uid) }
+          }.onChange(of: model.settings.audioDeviceUid) { _, newUID in
             refreshFormats(for: newUID, current: model.settings.fallbackAudioFormatID)
-          }
-          .labelsHidden()
+          }.labelsHidden()
         }
 
         LabeledDescription(
@@ -90,12 +81,8 @@ struct SettingsView: View {
               // format list is available again, so the Picker cannot clear it.
               Text(model.settings.fallbackAudioFormatID).tag(model.settings.fallbackAudioFormatID)
             }
-            ForEach(supportedFormats) { format in
-              Text(format.displayName).tag(format.id)
-            }
-          }
-          .disabled(supportedFormats.isEmpty)
-          .labelsHidden()
+            ForEach(supportedFormats) { format in Text(format.displayName).tag(format.id) }
+          }.disabled(supportedFormats.isEmpty).labelsHidden()
         }
 
         #if DEBUG
@@ -105,10 +92,8 @@ struct SettingsView: View {
               formatID: model.settings.fallbackAudioFormatID,
               deviceUID: model.settings.audioDeviceUid
             )
-          }
-          .disabled(
-            model.settings.fallbackAudioFormatID.isEmpty
-              || model.settings.audioDeviceUid.isEmpty
+          }.disabled(
+            model.settings.fallbackAudioFormatID.isEmpty || model.settings.audioDeviceUid.isEmpty
           )
         }
         #endif
@@ -121,30 +106,20 @@ struct SettingsView: View {
         LabeledDescription(
           title: "Launch at Login",
           subtitle: "Automatically start Ambeo Companion when you log in to your Mac."
-        ) {
-          Toggle("", isOn: $model.isLaunchAtLoginEnabled)
-            .labelsHidden()
-            .toggleStyle(.switch)
-        }
+        ) { Toggle("", isOn: $model.isLaunchAtLoginEnabled).labelsHidden().toggleStyle(.switch) }
 
         LabeledDescription(
           title: "Media Key Interception",
           subtitle:
             "Allow this app to intercept Magic Keyboard media keys to synchronize volume with AMBEO."
-        ) {
-          Toggle("", isOn: $model.settings.mediaKeyEnabled)
-            .labelsHidden()
-            .toggleStyle(.switch)
-        }
+        ) { Toggle("", isOn: $model.settings.mediaKeyEnabled).labelsHidden().toggleStyle(.switch) }
 
         LabeledDescription(
           title: "Stealth Rewind (Experimental)",
           subtitle:
             "Mute AMBEO during audio format switches and rewind Music.app to 0:00 once the soundbar locks onto the new input format."
         ) {
-          Toggle("", isOn: $model.settings.stealthRewindEnabled)
-            .labelsHidden()
-            .toggleStyle(.switch)
+          Toggle("", isOn: $model.settings.stealthRewindEnabled).labelsHidden().toggleStyle(.switch)
         }
 
         LabeledDescription(
@@ -159,13 +134,12 @@ struct SettingsView: View {
                 set: { model.settings.stealthRewindDelayMs = Int($0.rounded()) }
               ),
               in: 0...600
+            ).frame(width: 150)
+            Text("\(model.settings.stealthRewindDelayMs) ms").monospacedDigit().frame(
+              width: 46,
+              alignment: .trailing
             )
-            .frame(width: 150)
-            Text("\(model.settings.stealthRewindDelayMs) ms")
-              .monospacedDigit()
-              .frame(width: 46, alignment: .trailing)
-          }
-          .disabled(!model.settings.stealthRewindEnabled)
+          }.disabled(!model.settings.stealthRewindEnabled)
         }
 
         LabeledDescription(
@@ -174,21 +148,17 @@ struct SettingsView: View {
             "Volume offset automatically applied when switching between Dolby Atmos and stereo playback."
         ) {
           HStack {
-            Slider(
-              value: $model.settings.atmosBoostAmount,
-              in: 0...40,
+            Slider(value: $model.settings.atmosBoostAmount, in: 0...40, ).frame(width: 150)
+            Text("\(Int(model.settings.atmosBoostAmount))%").monospacedDigit().frame(
+              width: 46,
+              alignment: .trailing
             )
-            .frame(width: 150)
-            Text("\(Int(model.settings.atmosBoostAmount))%")
-              .monospacedDigit()
-              .frame(width: 46, alignment: .trailing)
           }
         }
 
         LabeledDescription(
           title: "Auto Standby",
-          subtitle:
-            "Time with no audio playback before the soundbar enters eco standby mode."
+          subtitle: "Time with no audio playback before the soundbar enters eco standby mode."
         ) {
           Picker("", selection: $model.settings.autoStandbySeconds) {
             Text("Off (Never)").tag(0)
@@ -196,9 +166,7 @@ struct SettingsView: View {
             Text("10 minutes").tag(600)
             Text("15 minutes").tag(900)
             Text("30 minutes").tag(1800)
-          }
-          .labelsHidden()
-          .disabled(appModel.ambeoClient == nil)
+          }.labelsHidden().disabled(appModel.ambeoClient == nil)
         }
 
       } header: {
@@ -210,44 +178,32 @@ struct SettingsView: View {
         LabeledDescription(
           title: "Wake Up Soundbar",
           subtitle: "Wake up the soundbar and reconnect HDMI TV audio when in standby."
-        ) {
-          KeyboardShortcuts.Recorder(for: .wakeUpSoundbar)
-        }
+        ) { KeyboardShortcuts.Recorder(for: .wakeUpSoundbar) }
 
         LabeledDescription(
           title: "AMBEO 3D Mode",
           subtitle: "Toggle AMBEO 3D sound processing On or Off."
-        ) {
-          KeyboardShortcuts.Recorder(for: .toggleAmbeoMode)
-        }
+        ) { KeyboardShortcuts.Recorder(for: .toggleAmbeoMode) }
 
         LabeledDescription(
           title: "AMBEO 3D Level",
           subtitle: "Cycle through Light, Standard, and Boost intensity levels."
-        ) {
-          KeyboardShortcuts.Recorder(for: .cycleAmbeoLevel)
-        }
+        ) { KeyboardShortcuts.Recorder(for: .cycleAmbeoLevel) }
 
         LabeledDescription(
           title: "Audio Preset",
           subtitle: "Cycle through Adaptive, Music, Movie, News, Neutral, and Sports."
-        ) {
-          KeyboardShortcuts.Recorder(for: .cyclePreset)
-        }
+        ) { KeyboardShortcuts.Recorder(for: .cyclePreset) }
 
         LabeledDescription(
           title: "Night Mode",
           subtitle: "Toggle dynamic range compression for late-night listening."
-        ) {
-          KeyboardShortcuts.Recorder(for: .toggleNightMode)
-        }
+        ) { KeyboardShortcuts.Recorder(for: .toggleNightMode) }
 
         LabeledDescription(
           title: "Voice Enhancement",
           subtitle: "Toggle dialogue clarity enhancement."
-        ) {
-          KeyboardShortcuts.Recorder(for: .toggleVoiceEnhancement)
-        }
+        ) { KeyboardShortcuts.Recorder(for: .toggleVoiceEnhancement) }
       } header: {
         Text("Shortcuts")
       }
@@ -258,16 +214,11 @@ struct SettingsView: View {
           Spacer()
           let version =
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.26"
-          Text("Ambeo Companion v\(version)")
-            .font(.footnote)
-            .foregroundStyle(.tertiary)
+          Text("Ambeo Companion v\(version)").font(.footnote).foregroundStyle(.tertiary)
           Spacer()
         }
-      }
-      .listRowBackground(Color.clear)
-    }
-    .formStyle(.grouped)
-    .onChange(of: availableAudioDevices, initial: true) { _, _ in
+      }.listRowBackground(Color.clear)
+    }.formStyle(.grouped).onChange(of: availableAudioDevices, initial: true) { _, _ in
       refreshFormats(
         for: appModel.settings.audioDeviceUid,
         current: appModel.settings.fallbackAudioFormatID
@@ -288,21 +239,15 @@ struct SettingsView: View {
     guard currentID.isEmpty || !supportedFormats.contains(where: { $0.id == currentID }) else {
       return
     }
-    let best =
-      supportedFormats
-      .filter { $0.channels == 2 }
-      .sorted {
-        if $0.sampleRate != $1.sampleRate { return $0.distanceFrom48kHz < $1.distanceFrom48kHz }
-        return $0.bitDepth > $1.bitDepth
-      }.first
-    if let id = best?.id {
-      appModel.settings.fallbackAudioFormatID = id
-    }
+    let best = supportedFormats.filter { $0.channels == 2 }.sorted {
+      if $0.sampleRate != $1.sampleRate { return $0.distanceFrom48kHz < $1.distanceFrom48kHz }
+      return $0.bitDepth > $1.bitDepth
+    }.first
+    if let id = best?.id { appModel.settings.fallbackAudioFormatID = id }
   }
 
   private func applyFallbackNow(formatID: String, deviceUID: String) {
-    guard
-      let device = availableAudioDevices.first(where: { $0.uid == deviceUID }),
+    guard let device = availableAudioDevices.first(where: { $0.uid == deviceUID }),
       let format = supportedFormats.first(where: { $0.id == formatID })
     else { return }
     AudioDeviceMonitor.shared.fallback(format: format, for: device.id)
@@ -323,10 +268,10 @@ private struct LabeledDescription<Content: View>: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(title)
         if !subtitle.isEmpty {
-          Text(subtitle)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+          Text(subtitle).font(.caption).foregroundStyle(.secondary).fixedSize(
+            horizontal: false,
+            vertical: true
+          )
         }
       }
     }
