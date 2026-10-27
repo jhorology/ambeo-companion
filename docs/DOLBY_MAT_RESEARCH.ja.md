@@ -1,6 +1,6 @@
 # macOSの常時Dolby MAT出力に関する調査
 
-調査日: 2026-10-14（JST）
+調査日: 2026-10-14（JST） / 再確認: 2026-10-28（JST、macOS 27.2 Build 26B123）
 
 ## 目的と結論
 
@@ -14,7 +14,8 @@ Ambeo Companionの将来機能として、macOSの通常音声・通知音・Atm
 
 ## 調査環境・操作範囲
 
-- macOS 27.0.1、Build 26A434。
+- macOS 27.0.1、Build 26A434（初回調査：2026-10-14）。
+- macOS 27.2、Build 26B123（再確認：2026-10-28）。
 - ローカルSDK: Xcode 27.0.0のMacOSX SDK。
 - HDMI音声デバイス名: `AW3225QF`。
 - 観測時のCoreAudio Device ID: 96、Stream ID: 97。IDは再接続等で変わり得る。
@@ -297,6 +298,7 @@ FFmpegの `spdifenc.c` にあるMAT処理はTrueHDフレームの格納処理で
 - `kernelcache` および `dyld_shared_cache_arm64e` 全量の調査により、HDMIドライバ（`DCPAVAudioDriver`）と `AudioToolboxCore` の変換チェーン構築部には `mtb+`／`mtc+`（Dolby Atmos MAT 2.0／2.1）の受け皿があるものの、**肝心のMATエンコーダコンポーネントがmacOSには存在しない**ことが判明した。
 - macOS上で常時MAT出力を実現するには、プロプライエタリなDolby MAT 2.xエンコーダ（PCM＋メタデータのパッキングおよびIEC 61937フレーミング）を自前実装するか、他プラットフォーム（tvOS等）からバイナリを移植する必要があり、Ambeo Companionの機能としては現実的ではない。
 - したがって、**macOSでの常時Dolby MAT出力機能はここで調査完了・採用見送り（保留）**とし、通常機能の開発から切り離す。今回の結果はmacOS 27.0.1（Build 26A434）時点のシステム構成に基づくものであり、将来のmacOSアップデートでMATエンコーダコンポーネントが同梱された場合にのみ再検討の余地がある。
+- **2026-10-28 追記（macOS 27.2 / Build 26B123）**: 登録済み `AudioComponent`（`aenc` 13種 / `acdc` 9種 / `adec` 48種）、`AudioCodecs.component` 内のエクスポートシンボル、`AudioConverterNew` / `AudioFormatGetProperty(FormatName)` プローブ（`mtct` / `mtc+` / `mtb+` すべて `fmt?`）、`dyld_shared_cache_arm64e` 全スライスおよび `coreaudiod`、ならびに `DCPAVAudioDriver` の `EventLog` を再確認し、**macOS 27.2 でもMATエンコーダは未同梱で変更がないことを確認した。**
 
 ## 参照資料
 
