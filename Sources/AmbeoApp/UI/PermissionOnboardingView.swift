@@ -34,13 +34,7 @@ struct PermissionOnboardingView: View {
 private struct LocalNetworkSection: View {
   @Environment(AppModel.self) private var appModel
 
-  private var status: LocalNetworkPermissionStatus {
-    LocalNetworkPermissionStatus(
-      deviceCount: appModel.networkDevices.count,
-      hasClient: appModel.ambeoClient != nil,
-      startedAt: appModel.discoveryStartedAt
-    )
-  }
+  private var status: LocalNetworkPermissionStatus { appModel.localNetworkStatus }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {

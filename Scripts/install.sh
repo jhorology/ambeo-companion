@@ -58,6 +58,9 @@ echo "      Without it, discovery finds nothing and the menu bar shows no soundb
 
 echo "==> [4/4] Launch permission onboarding"
 open "$DEST"
+# An LSUIElement app gets no Local Network prompt, and the grant is gated by NSBonjourServices,
+# so take the user straight to the toggle.
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
 echo
 echo "Installed: ${DEST}"
 echo "Use the app's Permissions window to enable the required permissions."

@@ -119,7 +119,9 @@ If `AmbeoCompanion.app` is not listed under Device Control and Data Access / Acc
 
 Local Network access has no public API, so the app's Permissions window can only infer it: it reports **Allowed** once mDNS discovery returns a soundbar, and **No soundbar found - check Local Network** when the result stays empty.
 
-When that happens the menu bar loses its soundbar controls (Preset, AMBEO Mode / Level, Night Mode, Voice Enhancement) because they need a connected soundbar, and the menu shows **Open Local Network Settings...** - click it and allow Ambeo Companion. `Scripts/install.sh` resets this grant on every reinstall, so expect to re-grant it after installing a new build.
+When that happens the menu bar loses its soundbar controls (Preset, AMBEO Mode / Level, Night Mode, Voice Enhancement) because they need a connected soundbar. The app opens its **Permissions** window on its own once discovery stays silent for 15 seconds, and the menu shows **Open Local Network Settings...** - allow Ambeo Companion there. This app has no Local Network prompt of its own (it runs as an accessory app), so the toggle is the only way in.
+
+`Scripts/install.sh` resets this grant on every reinstall and opens that pane for you. Running the app with `swift run AmbeoCompanion` is not gated: a bare binary has no `Info.plist`, so `NSBonjourServices` does not apply to it.
 
 Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset the TCC registrations and launch permission onboarding. If media keys or Stealth Rewind do not work, run the script or toggle the switches off and back on in each pane.
 

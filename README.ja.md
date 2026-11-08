@@ -119,7 +119,9 @@ Magic Keyboard や Mac の音量キーを `CGEventTap` で受け取り、イベ�
 
 ローカルネットワーク権限には公開 API が無いため、アプリの Permissions 画面は状態を推定表示します（mDNS がサウンドバーを検出したら Allowed、検出が続かなければ No soundbar found - check Local Network）。
 
-検出できない状態では、メニューバーからサウンドバー操作項目（Preset / AMBEO Mode / AMBEO Level / Night Mode / Voice Enhancement）が消えます。これらは接続中のサウンドバーが無くと表示されないためで、代わりにメニューへ **Open Local Network Settings...** が出るので、そこから Ambeo Companion を許可してください。`Scripts/install.sh` は再インストールのたびにこの権限もリセットします。
+検出できない状態では、メニューバーからサウンドバー操作項目（Preset / AMBEO Mode / AMBEO Level / Night Mode / Voice Enhancement）が消えます。これらは接続中のサウンドバーが無くと表示されないためです。検出が15秒間ゼロのままであればアプリが **Permissions** 窓を自動的に開き、メニューにも **Open Local Network Settings...** が出るので、そこから Ambeo Companion を許可してください。このアプリは常駐（LSUIElement）のため許可ダイアログが出ず、**トグルをオンにするのが唯一の許可方法**です。
+
+`Scripts/install.sh` は再インストールのたびにこの権限をリセットし、該当ペインを自動的に開きます。なお `swift run AmbeoCompanion` ではこの問題は起きません。素のバイナリには `Info.plist` が無く `NSBonjourServices` が適用されないため、ゲートの対象になりません。
 
 再ビルドのたびにアドホック署名のチェックサムが変わるため、画面上はオンのままでも権限が無効になります。`Scripts/install.sh` が各登録をリセットし、権限オンボーディングを起動します。メディアキーや Stealth Rewind が効かないときは、そのスクリプトを実行するか、各画面で一度オフにしてからオンにし直してください。
 

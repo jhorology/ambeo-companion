@@ -7,6 +7,7 @@ struct AmbeoCompanionApp: App {
   @State private var appModel = AppModel()
   @State private var didOfferDeviceSetup = false
   @State private var didOfferPermissionSetup = false
+  @State private var didOfferLocalNetworkHint = false
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openURL) private var openURL
 
@@ -148,11 +149,7 @@ struct AmbeoCompanionApp: App {
 
         // Discovery is silent when macOS blocks local-network access (the browser reports no
         // results and every LAN request fails as "offline"), so name the cause in the menu.
-        if LocalNetworkPermissionStatus(
-          deviceCount: appModel.networkDevices.count,
-          hasClient: appModel.ambeoClient != nil,
-          startedAt: appModel.discoveryStartedAt
-        ) == .nothingFound {
+        if appModel.localNetworkStatus == .nothingFound {
           Button("Open Local Network Settings...", systemImage: "exclamationmark.triangle") {
             MediaKeyPermission.openPrivacyPane(anchor: "Privacy_LocalNetwork")
           }
@@ -177,6 +174,16 @@ struct AmbeoCompanionApp: App {
       .onChange(of: appModel.needsPermissionOnboarding, initial: true) { _, needed in
         guard needed, !didOfferPermissionSetup else { return }
         didOfferPermissionSetup = true
+        openPermissionWindow()
+      }.onChange(of: appModel.localNetworkStatus, initial: true) { _, status in
+        // Discovery went silent past the grace window. The usual cause is the Local Network
+        // permission, which shows no prompt for an accessory (LSUIElement) app, so open the
+        // window that explains it and links to the pane. Once per launch.
+        guard status == .nothingFound, !didOfferLocalNetworkHint else { return }
+        didOfferLocalNetworkHint = true
+        Logger.network.warning(
+          "mDNS discovery produced no soundbar after the grace window; opening the Permissions window (Local Network is the usual cause)."
+        )
         openPermissionWindow()
       }.onChange(of: appModel.networkDevices) { _, devices in
         guard appModel.settings.ambeoUid.isEmpty, !devices.isEmpty, !didOfferDeviceSetup else {

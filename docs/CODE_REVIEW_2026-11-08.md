@@ -103,6 +103,23 @@ tccutil reset LocalNetwork "$BUNDLE_ID" || echo "Warning: Failed to reset Local 
 | `LocalNetworkPermissionStatus.nothingFound` | ラベルを "No soundbar found - check Local Network" に変更（テストも更新） |
 | `Scripts/install.sh` | Local Network リセットの後に「このアプリは局所ネットワーク権限でゲートされる。許可しないと検出ゼロ・メニューに操作項目なし」と明示表示 |
 
+#### 追加対応（2026-11-09・`swift run` は正常 / インストール版のみ症状）
+
+`swift run AmbeoCompanion` では症状が出ず、`install.sh` 経由の `.app` だけ消えるという報告から確定した事実:
+
+- `swift run` の素のバイナリには **Info.plist が無い**（`Bundle.main.bundleIdentifier` は nil → dev 接頭辞にフォールバック）。`NSBonjourServices` を読む主体が居ないためゲートされず、mDNS も LAN HTTP も通る
+- `.app` には `NSBonjourServices` が入るため policy の対象になり、**`mDNS browser is waiting: -65570: PolicyDenied`**（追加した状態ログが初めての実機出力を記録）
+
+そして前コミットのメニューボタンには**欠陥があった**。推定状態は `discoveryStartedAt` からの経過時間を見るが、**経過時間は Observable では無い**ため、結果がゼロのままの状況では SwiftUI が再評価しない。つまり「何も検出できない」ときっちり表示されない。
+
+| 変更 | 内容 |
+| --- | --- |
+| `AppModel.discoveryGraceElapsed` | グレース（`discoveryGrace = 15秒`）経過を**観測可能なフラグ**にする。generation 付きのワンショット Task で設定し、検索再開（起動・スリープ復帰・ネットワーク切替）でリセット |
+| `AppModel.localNetworkStatus` | `LocalNetworkPermissionStatus` と同じ判定を**Observable な状態だけで**導出。メニューと Permissions 窓がこれを参照 |
+| Permissions 窓の自動表示 | `.onChange(of: localNetworkStatus, initial: true)` で `.nothingFound` になったら**1回だけ**開く（LSUIElement では許可プロンプトが出ないため）。警告ログも残す |
+| `Scripts/install.sh` | インストール後に `x-apple.systempreferences:...?Privacy_LocalNetwork` を開いて、トグルをワンクリックにする |
+| テスト | AmbeoAppTests に 4件追加（probing / grace elapsed / 機器が出たら allowed / クライアント接続で allowed）。swift-testing は AmbeoCore 43件＋AmbeoApp **16件** |
+
 **教訓**: `NSBonjourServices` の追加は「プロンプトが出て終わり」ではなく、**許可されていない場合に UI が何も語らなくなる**変更だった。検出系は失敗が無言になりやすい（`NWBrowser` に結果が無いだけ）ので、状態ハンドラのログとユーザー向け誘導が必須。
 
 ---
@@ -576,6 +593,7 @@ AppModel は 1296 行のまま（今回の対応で増加）。分割そのも�
 | 2026-11-08 | 🟡10 TCC 権限ポーリング | 対応済み（常時2秒ポーリングを削除し、起動時＋アプリがアクティブになった時＋メディアキー監視のストリーム終了時＋スリープ復帰時に。実機確認は未実施） |
 | 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューを共有化して**対応済み**。機器側購読キューは **WON'T FIX**（組込 Web UI がリロードごとにキューを作り unsubscribe しないが動作する → セッション単位で firmware が回収する推定。明示解放は入れない） |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
+| 2026-11-09 | 🔴1 の追加対応（観測可能な推定・自動誘導） | 対応済み。`swift run` は無 Info.plist でゲートされず、`.app` のみ `-65570: PolicyDenied`。経過時間は Observable で無いという前コミットの欠陥を修正（grace tick＋`localNetworkStatus`）。Permissions 窓の自動表示、install.sh がペインを開く、テスト4件 |
 | 2026-11-09 | 🔴1 の実機副作用（メニュー項目消失） | 原因確定＋対応済み。mDNSResponder が `Local network access to bonjour ... 'denied' for (io.github.jhorology.AmbeoCompanion)`。機器は健全（dns-sd / curl で確認）。browser 状態ログ追加・メニューに "Open Local Network Settings…"・install.sh 注意書き・ラベル更新 |
 | 2026-11-08 | リリース | **`0.1.28` / build `28`**。🟡11（mDNS 検証）・🟡12 完了（アプリ本体のライブラリ化＋テスト）・🟢（CI／整形）を含む。`SettingsView` のフォールバック文字列も `0.1.28` に更新済み |
 

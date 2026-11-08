@@ -147,10 +147,24 @@ struct AppSettings: Codable {
     }
   }
 
-  private(set) var networkDevices: [SennheiserNetworkDevice] = []
+  /// Internal setter: `@testable` tests drive the discovery results directly.
+  var networkDevices: [SennheiserNetworkDevice] = []
   /// When mDNS browsing last started. The Local Network permission has no public API, so the
   /// Permissions window uses this to tell "discovery is still warming up" from "nothing found".
   private(set) var discoveryStartedAt: ContinuousClock.Instant? = nil
+  /// Set once the discovery grace window has elapsed. Elapsed *time* is not observable, so the
+  /// grace window needs a tick: without it SwiftUI never re-evaluates when browsing stays silent,
+  /// which is exactly the Local Network denial case. Internal setter for `@testable` tests.
+  var discoveryGraceElapsed = false
+  private var discoveryGeneration = 0
+  static let discoveryGrace: Duration = .seconds(15)
+
+  /// Observable form of the Local Network inference. Same rules as `LocalNetworkPermissionStatus`,
+  /// but derived only from observable state so the menu and `onChange` react to it.
+  var localNetworkStatus: LocalNetworkPermissionStatus {
+    if !networkDevices.isEmpty || ambeoClient != nil { return .allowed }
+    return discoveryGraceElapsed ? .nothingFound : .probing
+  }
   private(set) var currentAudioDevice: AudioDevice? = nil
   private(set) var availableAudioDevices: [AudioDevice] = []
   /// Internal setter: only AppModel assigns it in the app, and `@testable` tests inject a client
@@ -378,6 +392,14 @@ struct AppSettings: Codable {
   private func startDiscoveringAmbeo() {
     discoveringAmbeoTask?.cancel()
     discoveryStartedAt = .now
+    discoveryGraceElapsed = false
+    discoveryGeneration += 1
+    let generation = discoveryGeneration
+    Task { [weak self] in
+      try? await Task.sleep(for: Self.discoveryGrace)
+      guard let self, !Task.isCancelled, generation == self.discoveryGeneration else { return }
+      self.discoveryGraceElapsed = true
+    }
     discoveringAmbeoTask = Task {
       for await devices in SennheiserDiscovery.browse() {
         self.networkDevices = devices
