@@ -12,7 +12,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `swift build -c debug` | 警告ゼロで成功 |
-| `swift test` | XCTest 15件（うち2件スキップ）＋ swift-testing 24件、すべて成功 |
+| `swift test` | XCTest 15件（うち2件スキップ）＋ swift-testing 39件・7スイート、すべて成功 |
 | CoreAudio 出力ストリーム実測（本機・6デバイス） | **全デバイスで out streams = 1**（🔴4 の評価に使用。表は同項参照） |
 | `swift-format lint -r -p`（`Tests` を含めて実行） | `Tests/` の複数ファイルで `[RemoveLine]` 警告。**ただし `swift-format format -i` は差分ゼロ**（後述 🟢 で原因を解析） |
 
@@ -367,15 +367,51 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 ### 11. mDNS 応答の信頼性チェックが無い
 
-**優先度：中／未対応**
+**優先度：中／対応済み（2026-11-08）**
 
-`SennheiserDiscovery` は TXT の `uuid/serial/name/ip` をそのまま採用し、AppModel は `uuid == settings.ambeoUid` で IP へ HTTP リクエストを投げる。`openURL("http://\(device.ip)")` も同様（AmbeoCompanionApp.swift 138行目）。LAN 上で `_sennheiser._tcp` を広告すれば**任意の IP へリクエスト／ブラウザを開かせる**ことが可能。UID 形式（`ambeosoundbar…-<UUID>`）と IP の妥当性（link-local / マルチキャスト以外）の検証が安価。
+`SennheiserDiscovery` は TXT の `uuid/serial/name/ip` をそのまま採用し、AppModel は `uuid == settings.ambeoUid` で IP へ HTTP リクエストを投げていた。`openURL("http://\(device.ip)")`（AmbeoCompanionApp.swift）も同様で、LAN 上で `_sennheiser._tcp` を広告すれば任意の host へリクエスト／ブラウザを開かせることが可能だった。
 
-### 12. `AppModel.swift` 1187行・責務過多でテスト不能域がある
+#### 対応内容
 
-**優先度：中／未対応**
+`SennheiserNetworkDevice.parse(_:) -> Result<SennheiserNetworkDevice, ParseFailure>` を追加（public・テスト可能）。`init?(withDict:)` はそれをラップするだけにした。
 
-`@Observable AppModel` に7責務（設定永続化 / 接続 / 検出 / CoreAudio / メディアキー / Atmos / OSD / 電源通知）。Stealth Rewind と Recovery は手厚くテストされている一方、**再接続・IP 変更・スリープ復帰・Boost 台帳**（過去に実バグが出た場所）はテスト不能。`handleAtmosTransition` の音量クランプ計算、`reconcileAudioDeviceSelection`、`debouncedReconnectIfIPChanged` の判定を純関数化すれば `AmbeoCoreTests` で守れる。
+| 項目 | 規則 | 拒否例 |
+| --- | --- | --- |
+| 4キーすべて必須 | trim 後に空なら `.missingField(key)` | `"ip": "   "` |
+| `uuid` | ASCII の `[A-Za-z0-9._-]`、8〜128文字（URL クエリに埋めるため） | `a/b/c`、`uuid%20x`、`bad uuid`、非ASCII |
+| `ip` | 4オクテット・各 0〜255・先頭ゼロ拒否 | `192.168.0.256`、`999.1.1.1`、`evil.example.com`、`192.168.020.1`、`::1`、`192.168.0.20/path` |
+| 機器になり得ないアドレス | `0.0.0.0` と `127.x.x.x` を拒否 | `127.0.0.1` |
+
+拒否は黙って捨てず `Logger.network.warning("Ignoring mDNS record: <理由>")` に出す。`169.254.x.x`（link-local）は**許容**している。DHCP 失敗時に機器がそのアドレスを取るケースがあり、除外すると見つけられなくなるためだ。
+
+#### 検証
+
+テスト6件（`SennheiserDiscoveryParsingTests`）。実機ログに記録された実際の TXT レコード（`uuid: ambeosoundbarmini-2ccbc823-…` / `name: サウンドバー` / `ip: 192.168.0.20`）を正常系として固定した。
+
+**テストが実バグを検出した**: 初版のオクテット検証は「各オクテット ≤ 255」をチェックしておらず、`192.168.0.256` と `999.1.1.1` が通った。テストが失敗して修正した。
+
+### 12. `AppModel.swift` が責務過多でテスト不能域がある
+
+**優先度：中／部分対応（2026-11-08）**
+
+`@Observable AppModel` に7責務（設定永続化 / 接続 / 検出 / CoreAudio / メディアキー / Atmos / OSD / 電源通知）。Stealth Rewind と Recovery は手厚くテストされている一方、**再接続・IP 変更・スリープ復帰・Boost 台帳**（過去に実バグが出た場所）はテストできない。
+
+#### 対応内容（純ロジックを AmbeoCore へ抽出）
+
+| 抽出物 | 位置 | 使われる箇所 |
+| --- | --- | --- |
+| `VolumeAdjustment`（45行） | `Sources/AmbeoCore/Audio/VolumeAdjustment.swift` | メディアキー音量・Atmos Boost の apply / revert / adjust・スリープ前戻しの**5箇所**が共通使用 |
+| `LocalNetworkPermissionStatus`（44行） | `Sources/AmbeoCore/Utilities/LocalNetworkPermissionStatus.swift` | Permissions 窓の状態推論（UI ターゲットから移動） |
+
+`VolumeAdjustment.change(from:delta:min:max:)` が返す `appliedDelta` は「**機器が実際に受け入れた量**」である点が要点。上限付近で +10 を要求して +5 しか入らないとき、台帳へは +5 しか記録しない（🟡6 で明記した「書き込み成功後にだけ台帳を更新する」不変条件につながる）。`edit` の部分欠落（min だけ / max だけ）のデフォルトもここに集約した。
+
+新規9テスト（`VolumeAdjustmentTests` 5件／`LocalNetworkPermissionStatusTests` 4件）。swift-testing は 24件 → **39件**になった。
+
+#### 残る課題と、そこに必要な手順
+
+AppModel は現在 **1296行**（今回の対応で増加）。未だテストできない領域: 再接続／IP 変更判定／スリープ復帰／telemetry 処理／メディアキーの手順／Boost 台帳の適用順序。
+
+根本解決には **`AppModel` をライブラリターゲットへ移す**必要がある。SPM は *executableTarget の testTarget を許可しない*（`Package.swift:21-28` で `AmbeoCompanion` は executableTarget、テストターゲットは `AmbeoCore` に対するものだけ）ため、アプリ側コードは現状テスト不能だ。AppKit 依存は AmbeoCore に既にある（MusicPlayerController / SystemEventMonitor）ので移動は可能で、SwiftUI の View はアプリ側に残せる。
 
 ### 13. 終了処理に上限時間がない
 
@@ -424,34 +460,16 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 ---
 
-## 🟢 低優先度・衛生面
+## 🟢 低優先度（対応済み・2026-11-08）
 
-- **`Package.resolved` が `.gitignore`（9行目）**。実行物アプリなので再現ビルドのためにコミットする側。
-- **CI が無い**（`.github` 等なし）。`swift build -c release` ＋ `swift test` ＋ `swift-format lint` の3行で守れる。
-- **`Scripts/format.sh`（27〜30行目）の TARGETS に `Tests` が無い** — ただし lint 警告の主原因はそれではない。`.swift-format` が `lineBreakBeforeEachArgument: true` のため、整形済みコードの引数1行ごとの改行を lint が `[RemoveLine]` で全部指摘する（`Sources/` でも同じ。最小再現：2引数の呼び出しを整形すると lint が5件出す）。したがって **Tests を TARGETS に足しても lint 警告は消えない**
-  - CI のチェックは `swift-format format -i` ＋ `git diff --exit-code`（整形の定着確認）にして、lint は外すか、`lineBreakBeforeEachArgument: false` にして整合させる
-- `#available(macOS 13.0, *)`（AppModel.swift 215 / 219行目）は `platforms: [.macOS(.v14)]` なので常に真の死んだ分岐。
-- `checkHogged`（AudioDeviceMonitor.swift 309〜311行目）`property(...).first ?? -1 != -1` は意味は正しい（`??` の優先度が高い）が意図が読めない。`( … .first ?? -1) != -1` と括弧を。
-- AudioDeviceMonitor.swift 141〜145行目のコメントアウト済み `extension Notification.Name` は削除。
-- SettingsView.swift 216行目の `"0.1.26"` ハードコード（Info.plist と二重管理）。
-- ログノイズ: 停止時に `Polling connection interrupted: cancelled.`（NOTICE、AmbeoClient.swift 241行目）。取り消しは無言化を。DEBUG は `.trace` で全システムイベントを disk へ書き、実測で `Logs/ambeo-companion.log` が1.5MB規模。
-- [SimpleFileLogHandler.swift](../Sources/AmbeoCore/Utilities/SimpleFileLogHandler.swift) 57行目の `UnsafeMutableRawPointer(bitPattern: …)!` はログ内の force unwrap。`ObjectIdentifier(Thread.current)` で十分。
-- 同ファイル4行目の `@_silgen_name("swift_demangle")` はランタイム内部依存。`.error` 時のみ発火するので実用は妥当だが、スタックトレース機能をビルドフラグで落とせるようにしておくと安全。
-- ad-hoc 署名（[PackageApp.swift](../Scripts/PackageApp.swift) 86 / 91行目の `--sign -`）ゆえ `install.sh` の `tccutil reset` が必要なのは設計として正しい。配布を考えると**自己署名証明書で DR を安定化**すると「再ビルドのたびに権限オフ→オン」が解消する。
-- **終了時の音量戻しがミュートを解除する**：`prepareForTermination` → `revertOutstandingBoost` → [AmbeoClient.swift](../Sources/AmbeoCore/Network/AmbeoClient.swift) 411〜420行目 `removeVolumeBoost` が volume を書くため、ミュート中に Quit すると解除される。🔴3 で塞いだ経路の外側なので残した。塞ぐなら「ミュート中は戻さないで台帳に残す」が自然で、復帰後は `isAtmosActive = appliedAtmosBoost > 0`（AppModel.swift）が適用済み状態を復元し、Atmos 終了時または次回再接続時の `revertOutstandingBoost` が回収する。
-- `applicationSupportsSecureRestorableState(_:) -> true` 未実装（macOS 14+ で console warning）。
+### CI とリポジトリ衛生
 
----
+- **`.github/workflows/ci.yml` を新設**：`macos-latest` で `swift package resolve` → `swift build -c release` → `swift test` → `brew install swift-format` → `./Scripts/format.sh --check`
+- **`Scripts/format.sh`**：TARGETS に **`Tests` を追加**（テストファイルが整形対象外だった）。`--check` を**作業ツリーを変更しない**比較モードとして新設（各ファイルと `swift-format format` の stdout を diff 比較）。`--lint` は情報用に。CI が `--check` を使う理由：`lineBreakBeforeEachArgument: true` の設定では lint の `RemoveLine` が整形結果と食い違い、lint 通過が条件にならないため（本機で実測確認済み）
+- **訂正**：「`Package.resolved` が未追跡」は**誤り**だった。ファイルは追跡済み（`git ls-files` に現れる／最終更新 `7b3cdf5`）。`.gitignore` に同名エントリが残っている矛盾だけを確認し、コメント行に置き換えた
+- 初回実行でテスト3ファイル（`AudioDeviceSelectionTests` / `RecoveryTests` / `StealthRewindTests`）が整形された。残っていた `AudioDeviceMonitor.swift:104` の行末コメント超過も移動し、**`swift-format lint` は警告ゼロ**になった
 
-## 維持すべき良い点
-
-- **並行処理の作りが丁寧**：`@MainActor` クラスの `Sendable` 準拠、actor 境界、`enqueueAtmosWork` による直列化、`endSession` の独立タスク化（observer 取消で復旧 RPC を殺さない）、`inFlightMute` の扱いなど、典型的なレース条件を潰せている。
-- **CoreAudio listener の teardown を別キューへ逃がした対処**（AudioDeviceMonitor.swift 198〜207、256〜265、445〜452行目）は、`Task.cancel()` 側のロックと衝突する既知のデッドロックを正しく回避している。
-- `SystemEventMonitor` の tap 無効化（user / timeout）分離と、WindowServer 停止要求をコールバック外へ遅延させる設計は的確。
-- `[T](unsafeUninitializedCapacity:)` で取得サイズが縮んだ場合の `initializedCount` 調整（AudioDeviceMonitor.swift 570行目）など、C API の落とし穴を押さえている。
-- ログに RPC 所要時間・フェーズ・経過を載せており、実機トラブルの追跡可能性が高い。
-
----
+**残る運用上の注意**：CI の swift-format は brew 最新版になる。このリポジトリは 604.0.0 で整形しており、バージョン漂移はチェック失敗として表面化する（失敗時にファイル一覧が出る）。ローカル側の固定（pin）は未実施。
 
 ## 対応順の提案
 
@@ -471,11 +489,9 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 - 🟡6 電源断をまたいだ台帳リセット（リセットは二重 Boost＝爆音）
 - 🟡8 の機器側購読キュー（機器組込 Web UI で調査済み、解放しなくても問題なし）
 
-**未対応**
-
-8. mDNS 応答の妥当性検証（🟡11）
-9. `AppModel` 分割でテスト可能域を広げる（🟡12）
-10. CI ＋ `Package.resolved` ＋ Tests 整形（🟢）
+8. ✅ mDNS 応答の妥当性検証（🟡11）
+9. ✅ CI ＋ Tests 整形（🟢）
+10. 🟡12 は**部分対応**（純ロジック抽出まで）。`AppModel` のライブラリ化は未着手
 
 ※ 終了 deadline（🟡13）＋ミュート系の per-request timeout（🟡14）も 2026-11-08 に対応済み。
 
@@ -491,6 +507,9 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 | 2026-11-08 | 🟡6 電源断をまたいだ台帳リセット | **WON'T FIX**（AMBEO は音量を保持するため不整合が起きない。台帳リセットは二重 Boost＝爆音になる。不変条件を明記） |
 | 2026-11-08 | 🟡13 終了処理の上限時間 / 🟡14 ミュート系の per-request timeout | 対応済み（Quit 猶予 2.5秒、ミュート系書き込みは 2秒上限。新規テスト1件。実機での Quit 体感は未確認） |
 | 2026-11-08 | 🟡9 reconcile の自己取消 | 対応済み（didSet でストリームを再生成しない。単体テスト無し・実機確認は未実施） |
+| 2026-11-08 | 🟡11 mDNS 応答の検証 | 対応済み（`parse()` で TXT を検証し拒否理由をログ。新規6テスト。初版の ≤255 チェック漏れをテストが検出） |
+| 2026-11-08 | 🟡12 AppModel のテスト可能域 | **部分対応**（`VolumeAdjustment` と `LocalNetworkPermissionStatus` を AmbeoCore へ抽出・新規9テスト）。AppModel 自体のライブラリ化は未着手 |
+| 2026-11-08 | 🟢 CI・整形・Package.resolved | 対応済み（CI 新設、format.sh に Tests と非破壊 --check。**Package.resolved は元から追跡済み**という訂正あり） |
 | 2026-11-08 | 🟡10 TCC 権限ポーリング | 対応済み（常時2秒ポーリングを削除し、起動時＋アプリがアクティブになった時＋メディアキー監視のストリーム終了時＋スリープ復帰時に。実機確認は未実施） |
 | 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューを共有化して**対応済み**。機器側購読キューは **WON'T FIX**（組込 Web UI がリロードごとにキューを作り unsubscribe しないが動作する → セッション単位で firmware が回収する推定。明示解放は入れない） |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
@@ -545,4 +564,19 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 - `Sources/AmbeoCompanion/App/AppModel.swift` — 2秒ポーリング（`monitoringPermissionsTask`）を削除。起動時1回／`didBecomeActiveNotification`／メディアキー監視のストリーム終了時に更新し、スリープ復帰時の既存更新はそのまま
 
-次の対応推奨は 🟡11（mDNS 応答の妥当性検証）。🔴4・🟡6・🟡8 の機器側キューは WON'T FIX（上記）。
+### 🟡11・🟡12・🟢 の変更ファイル
+
+- `Sources/AmbeoCore/Network/SennheiserDiscovery.swift` — `parse()` / `ParseFailure` / UUID・IPv4 検証・拒否ログ
+- `Tests/AmbeoCoreTests/SennheiserDiscoveryParsingTests.swift` — 新規（6テスト）
+- `Sources/AmbeoCore/Audio/VolumeAdjustment.swift` — 新規（音量クランプ・適用量・OSD ゲージ）
+- `Sources/AmbeoCore/Utilities/LocalNetworkPermissionStatus.swift` — UI ターゲットから移動（public 化）
+- `Sources/AmbeoCompanion/App/AppModel.swift` — 音量計算5箇所を `VolumeAdjustment` 経由に
+- `Sources/AmbeoCompanion/UI/PermissionOnboardingView.swift` — 抽出に伴う `import AmbeoCore`
+- `Tests/AmbeoCoreTests/VolumeAdjustmentTests.swift` / `LocalNetworkPermissionStatusTests.swift` — 新規（計9テスト）
+- `.github/workflows/ci.yml` — 新規
+- `Scripts/format.sh` — `Tests` 追加・非破壊 `--check` 追加
+- `.gitignore` — `Package.resolved` エントリをコメントに置換
+
+### 残りは実機検証のみ
+
+コード側の指摘は 🟡12 の残り（AppModel のライブラリ化）を除き、全て対応済みか WON'T FIX。次は実機での確認（🔴1 / 🔴3 / 🟡7 / 🟡9 / 🟡10 / 🟡13）へ進む。

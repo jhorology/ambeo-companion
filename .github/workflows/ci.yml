@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-test-format:
+    name: Build, test, format (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          swift --version
+          xcodebuild -version
+          echo "swift-format: $(swift-format --version 2>/dev/null || echo 'not installed yet')"
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Tests
+        # The AMBEO integration tests stay skipped without AMBEO_INTEGRATION=1 and a real soundbar.
+        run: swift test
+
+      - name: Install swift-format
+        run: brew install swift-format
+
+      - name: Formatting check
+        # Compares every file against formatter output without touching the working tree.
+        # This repository is formatted with swift-format 604.0.0; if a newer runner version starts
+        # disagreeing, this step fails with the affected paths listed.
+        run: ./Scripts/format.sh --check

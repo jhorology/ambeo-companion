@@ -28,25 +28,49 @@ TARGETS=(
   Package.swift
   Sources
   Scripts
+  Tests
 )
 
 MODE="format"
-if [[ "${1:-}" == "--lint" || "${1:-}" == "--check" ]]; then
+if [[ "${1:-}" == "--lint" ]]; then
   MODE="lint"
+elif [[ "${1:-}" == "--check" ]]; then
+  MODE="check"
 fi
 
-if [[ "$MODE" == "lint" ]]; then
+case "$MODE" in
+lint)
+  # Informational: swift-format's lint rules do not fully agree with the formatter under
+  # lineBreakBeforeEachArgument = true, so CI uses --check instead.
   echo "==> Linting Swift files with swift-format..."
   swift-format lint \
     -r -p \
     "${CONFIG_ARGS[@]}" \
     "${TARGETS[@]}"
   echo "==> All files passed linting."
-else
+  ;;
+check)
+  # CI check: compare each file against formatter output without touching the working tree.
+  echo "==> Checking formatting (swift-format $(swift-format --version | head -1))..."
+  status=0
+  while IFS= read -r -d '' file; do
+    if ! diff -q "$file" <(swift-format format -p "${CONFIG_ARGS[@]}" "$file") >/dev/null; then
+      echo "Not formatted: $file"
+      status=1
+    fi
+  done < <(find "${TARGETS[@]}" -name '*.swift' -print0 | sort -z)
+  if [[ "$status" -ne 0 ]]; then
+    echo "==> Run ./Scripts/format.sh and commit the result." >&2
+    exit 1
+  fi
+  echo "==> All files are formatted."
+  ;;
+*)
   echo "==> Formatting Swift files with swift-format..."
   swift-format format \
     -i -r -p \
     "${CONFIG_ARGS[@]}" \
     "${TARGETS[@]}"
   echo "==> Formatting complete."
-fi
+  ;;
+esac

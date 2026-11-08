@@ -18,8 +18,7 @@ private final class RecoveringProtocol: URLProtocol, @unchecked Sendable {
       Self.requests += 1
       if request.url?.path == "/api/setData",
         let value = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?
-          .first(where: { $0.name == "value" })?.value,
-        let data = value.data(using: .utf8),
+          .first(where: { $0.name == "value" })?.value, let data = value.data(using: .utf8),
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let volume = object["i32_"] as? Int
       {
@@ -102,13 +101,9 @@ final class RecoveryTests: XCTestCase {
     XCTAssertNil(muteValue)
   }
 
-  func testInitialFailureRecoversVolumeMetadata() async {
-    await checkRecovery(array: false)
-  }
+  func testInitialFailureRecoversVolumeMetadata() async { await checkRecovery(array: false) }
 
-  func testInitialFailureRecoversArrayResponse() async {
-    await checkRecovery(array: true)
-  }
+  func testInitialFailureRecoversArrayResponse() async { await checkRecovery(array: true) }
 
   private func checkRecovery(array: Bool) async {
     RecoveringProtocol.lock.withLock {
@@ -148,8 +143,7 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(minimum, 0)
   }
 
-  @MainActor
-  func testBoostSurvivesRestartAndStaysWithOriginalDevice() {
+  @MainActor func testBoostSurvivesRestartAndStaysWithOriginalDevice() {
     let suite = "AmbeoTests.\(UUID())"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }

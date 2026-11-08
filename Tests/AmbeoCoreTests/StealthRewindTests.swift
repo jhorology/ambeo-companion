@@ -4,28 +4,22 @@ import Testing
 
 @testable import AmbeoCore
 
-@MainActor
-private final class MockMusicPlayer: MusicPlayerControlling, @unchecked Sendable {
+@MainActor private final class MockMusicPlayer: MusicPlayerControlling, @unchecked Sendable {
   var running: Bool = true
   var playing: Bool = true
   var permission: MusicAutomationPermissionStatus = .granted
   var rewindCallCount: Int = 0
   var onRewind: (() -> Void)?
 
-  nonisolated func isRunning() -> Bool {
-    MainActor.assumeIsolated { running }
-  }
+  nonisolated func isRunning() -> Bool { MainActor.assumeIsolated { running } }
 
   nonisolated func permissionStatus(askUserIfNeeded: Bool) -> MusicAutomationPermissionStatus {
     MainActor.assumeIsolated { permission }
   }
 
-  func isPlaying() async -> Bool {
-    running && playing && permission == .granted
-  }
+  func isPlaying() async -> Bool { running && playing && permission == .granted }
 
-  @discardableResult
-  func rewindToStart() async -> Bool {
+  @discardableResult func rewindToStart() async -> Bool {
     rewindCallCount += 1
     onRewind?()
     return true
@@ -46,8 +40,7 @@ private func makePhysicalFormat(
   )
 }
 
-@MainActor
-private final class MuteRecoveryState {
+@MainActor private final class MuteRecoveryState {
   var muted = false
   var available = true
   var failures = 0
@@ -64,9 +57,7 @@ private final class MuteRecoveryState {
         failures -= 1
         throw URLError(.timedOut)
       }
-      if blockUnmute {
-        await withCheckedContinuation { pendingUnmute = $0 }
-      }
+      if blockUnmute { await withCheckedContinuation { pendingUnmute = $0 } }
     }
     muted = value
     events.append(value)
@@ -79,8 +70,7 @@ private final class MuteRecoveryState {
   }
 }
 
-@Suite("Stealth Rewind Tests")
-struct StealthRewindTests {
+@Suite("Stealth Rewind Tests") struct StealthRewindTests {
   private static let stereoLPCM = makePhysicalFormat(
     sampleRate: 48_000,
     channels: 2,
@@ -94,8 +84,7 @@ struct StealthRewindTests {
     formatID: 0x6363_2B33  // 'cc+3'
   )
 
-  @Test("AmbeoAudioFormat lock and transition target matching")
-  func audioFormatLockAndMatching() {
+  @Test("AmbeoAudioFormat lock and transition target matching") func audioFormatLockAndMatching() {
     let unlocked = AmbeoAudioFormat(codec: "none", channels: 0, sampleRate: 0)
     #expect(!unlocked.isLocked)
     #expect(!unlocked.isAtmos)
@@ -119,8 +108,7 @@ struct StealthRewindTests {
     #expect(!dolbyAtmos.matchesTransitionTarget(isAtmosOrMultichannel: false))
   }
 
-  @Test("Executes 6-step Stealth Rewind sequence in order when Music.app is playing")
-  @MainActor
+  @Test("Executes 6-step Stealth Rewind sequence in order when Music.app is playing") @MainActor
   func fullStealthRewindSequence() async throws {
     let music = MockMusicPlayer()
     var events: [String] = []
@@ -184,8 +172,7 @@ struct StealthRewindTests {
   }
 
   @Test("Enforces mute timeout and unmutes AMBEO if soundbar format switch never arrives")
-  @MainActor
-  func muteTimeoutUnmutesSoundbar() async throws {
+  @MainActor func muteTimeoutUnmutesSoundbar() async throws {
     let music = MockMusicPlayer()
     var events: [String] = []
     var isMuted = false
@@ -232,8 +219,7 @@ struct StealthRewindTests {
     #expect(events == ["mute(true)", "mute(false)"])
   }
 
-  @Test("A mute request slower than the safety window ends the session at the deadline")
-  @MainActor
+  @Test("A mute request slower than the safety window ends the session at the deadline") @MainActor
   func slowMuteRequestEndsSessionAtDeadline() async throws {
     let music = MockMusicPlayer()
     var events: [String] = []
@@ -293,8 +279,7 @@ struct StealthRewindTests {
     #expect(music.rewindCallCount == 0)
   }
 
-  @Test("Skips Stealth Rewind when Music.app is not playing or not running")
-  @MainActor
+  @Test("Skips Stealth Rewind when Music.app is not playing or not running") @MainActor
   func skipsWhenMusicNotPlaying() async {
     let music = MockMusicPlayer()
     music.playing = false
@@ -328,8 +313,7 @@ struct StealthRewindTests {
     #expect(music.rewindCallCount == 0)
   }
 
-  @Test("Unmutes AMBEO safely even if Automation permission is revoked mid-session")
-  @MainActor
+  @Test("Unmutes AMBEO safely even if Automation permission is revoked mid-session") @MainActor
   func permissionRevokedMidSessionStillUnmutes() async throws {
     let music = MockMusicPlayer()
     var events: [String] = []
@@ -404,8 +388,7 @@ struct StealthRewindTests {
     #expect(!pcm2ch.matchesTransitionTarget(isAtmosOrMultichannel: true))
   }
 
-  @Test("Cancelling while the mute request is in flight leaves AMBEO unmuted")
-  @MainActor
+  @Test("Cancelling while the mute request is in flight leaves AMBEO unmuted") @MainActor
   func cancelDuringInFlightMuteUnmutesAfterMuteLands() async throws {
     let music = MockMusicPlayer()
     var events: [String] = []
@@ -459,8 +442,7 @@ struct StealthRewindTests {
     #expect(music.rewindCallCount == 0)
   }
 
-  @Test("A failed unmute is kept and retried after reconnect")
-  @MainActor
+  @Test("A failed unmute is kept and retried after reconnect") @MainActor
   func failedUnmuteIsRetried() async throws {
     struct RPCError: Error {}
     let music = MockMusicPlayer()
@@ -505,8 +487,7 @@ struct StealthRewindTests {
     #expect(!isMuted)
   }
 
-  @Test("An unavailable mute state preserves recovery until a later successful read")
-  @MainActor
+  @Test("An unavailable mute state preserves recovery until a later successful read") @MainActor
   func unavailableMuteStatePreservesPendingUnmute() async {
     let state = MuteRecoveryState()
     state.failures = 1
@@ -544,8 +525,7 @@ struct StealthRewindTests {
     #expect(state.attempts == 2)
   }
 
-  @Test("An unavailable initial mute state never mutes the soundbar")
-  @MainActor
+  @Test("An unavailable initial mute state never mutes the soundbar") @MainActor
   func unavailableInitialMuteStateSkipsSession() async {
     let state = MuteRecoveryState()
     let coordinator = StealthRewindCoordinator(
@@ -570,8 +550,7 @@ struct StealthRewindTests {
     #expect(!coordinator.isSessionActive)
   }
 
-  @Test("A confirmed unmuted state clears recovery without changing a later user mute")
-  @MainActor
+  @Test("A confirmed unmuted state clears recovery without changing a later user mute") @MainActor
   func confirmedUnmutedStateClearsRecovery() async {
     let state = MuteRecoveryState()
     state.failures = 1
@@ -606,9 +585,7 @@ struct StealthRewindTests {
   @Test(
     "Cleanup finishes before the next transition and concurrent cancels share one unmute",
     arguments: ["cancel", "complete", "timeout", "retry"]
-  )
-  @MainActor
-  func cleanupSerializesNextTransition(path: String) async {
+  ) @MainActor func cleanupSerializesNextTransition(path: String) async {
     let state = MuteRecoveryState()
     let coordinator = StealthRewindCoordinator(
       settleDelay: .zero,
@@ -642,12 +619,9 @@ struct StealthRewindTests {
           AmbeoAudioFormat(codec: "Dolby Atmos", channels: 12, sampleRate: 48_000)
         )
         await coordinator.waitForActiveSession()
-      case "timeout":
-        await coordinator.waitForActiveSession()
-      case "retry":
-        await coordinator.retryPendingUnmute(reason: "client connected")
-      default:
-        await coordinator.cancelAndUnmuteIfNeeded(reason: "disabled")
+      case "timeout": await coordinator.waitForActiveSession()
+      case "retry": await coordinator.retryPendingUnmute(reason: "client connected")
+      default: await coordinator.cancelAndUnmuteIfNeeded(reason: "disabled")
       }
     }
     while state.pendingUnmute == nil { await Task.yield() }

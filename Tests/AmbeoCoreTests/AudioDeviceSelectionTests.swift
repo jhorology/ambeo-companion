@@ -10,24 +10,14 @@ final class AudioDeviceSelectionTests: XCTestCase {
     _ id: UInt32,
     _ uid: String,
     transport: UInt32 = kAudioDeviceTransportTypeHDMI
-  )
-    -> AudioDevice
-  {
-    AudioDevice(id: id, uid: uid, name: "AW3225QF", transportType: transport)
-  }
+  ) -> AudioDevice { AudioDevice(id: id, uid: uid, name: "AW3225QF", transportType: transport) }
 
   func testRecoversObservedHDMISuffixAndSubsequentChanges() {
     let connected = device(96, uid + "_00000040")
     XCTAssertEqual(AudioDeviceSelection.resolve(uid: uid, in: [connected]), connected)
-    XCTAssertEqual(
-      AudioDeviceSelection.resolve(uid: uid + "_00000020", in: [connected]),
-      connected
-    )
+    XCTAssertEqual(AudioDeviceSelection.resolve(uid: uid + "_00000020", in: [connected]), connected)
     let unsuffixed = device(97, uid, transport: kAudioDeviceTransportTypeDisplayPort)
-    XCTAssertEqual(
-      AudioDeviceSelection.resolve(uid: connected.uid, in: [unsuffixed]),
-      unsuffixed
-    )
+    XCTAssertEqual(AudioDeviceSelection.resolve(uid: connected.uid, in: [unsuffixed]), unsuffixed)
   }
 
   func testExactUIDTakesPriorityEvenWhenDisplayIdentityIsAmbiguous() {

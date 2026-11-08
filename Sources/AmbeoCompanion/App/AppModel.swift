@@ -643,13 +643,13 @@ struct AppSettings: Codable {
     case .soundUp, .soundDown:
       guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
       let current = await client.state.volume
-      let step: Int = entry.edit.flatMap { $0.step } ?? 1
-      let minVol: Int = entry.edit.flatMap { $0.min } ?? 0
-      let maxVol: Int = entry.edit.flatMap { $0.max } ?? 100
+      let step: Int = entry.edit.flatMap { $0.step } ?? VolumeAdjustment.defaultStep
+      let minVol = entry.edit.flatMap { $0.min }
+      let maxVol = entry.edit.flatMap { $0.max }
       let delta = key == .soundUp ? step : -step
-      let newVol = max(minVol, min(maxVol, current + delta))
+      let newVol = VolumeAdjustment.clamped(current + delta, min: minVol, max: maxVol)
       // Position within the device min...max range. AMBEO uses 0...100, so this matches the hardware step.
-      let pct = maxVol > minVol ? Double(newVol - minVol) / Double(maxVol - minVol) : 0.0
+      let pct = VolumeAdjustment.gauge(value: newVol, min: minVol, max: maxVol)
       do {
         try await client.set(
           AmbeoEndpoint.Player.Volume(),
@@ -871,10 +871,15 @@ struct AppSettings: Codable {
         guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
         let current = await client.state.volume
         guard !Task.isCancelled, isAtmosActive else { return }
-        let minVol = entry.edit.flatMap { $0.min } ?? 0
-        let maxVol = entry.edit.flatMap { $0.max } ?? 100
-        let newVol = max(minVol, min(maxVol, current + boost))
-        let actualBoost = newVol - current
+        // Clamping and the defaults for a partial `edit` live in VolumeAdjustment (tested there).
+        let change = VolumeAdjustment.change(
+          from: current,
+          delta: boost,
+          min: entry.edit.flatMap { $0.min },
+          max: entry.edit.flatMap { $0.max }
+        )
+        let newVol = change.newValue
+        let actualBoost = change.appliedDelta
 
         guard await setBoostVolume(client, to: newVol, action: "apply") else { return }
         appliedAtmosBoost = actualBoost
@@ -887,10 +892,12 @@ struct AppSettings: Codable {
         guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
         let current = await client.state.volume
         guard !Task.isCancelled, !isAtmosActive else { return }
-        let minVol = entry.edit.flatMap { $0.min } ?? 0
-        let maxVol = entry.edit.flatMap { $0.max } ?? 100
         let revertedBoost = appliedAtmosBoost
-        let newVol = max(minVol, min(maxVol, current - revertedBoost))
+        let newVol = VolumeAdjustment.clamped(
+          current - revertedBoost,
+          min: entry.edit.flatMap { $0.min },
+          max: entry.edit.flatMap { $0.max }
+        )
 
         guard await setBoostVolume(client, to: newVol, action: "revert") else { return }
         appliedAtmosBoost = 0
@@ -914,10 +921,14 @@ struct AppSettings: Codable {
       guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
       let current = await client.state.volume
       guard !Task.isCancelled, model.isAtmosActive else { return }
-      let minVol = entry.edit.flatMap { $0.min } ?? 0
-      let maxVol = entry.edit.flatMap { $0.max } ?? 100
-      let newVol = max(minVol, min(maxVol, current + delta))
-      let actualDelta = newVol - current
+      let change = VolumeAdjustment.change(
+        from: current,
+        delta: delta,
+        min: entry.edit.flatMap { $0.min },
+        max: entry.edit.flatMap { $0.max }
+      )
+      let newVol = change.newValue
+      let actualDelta = change.appliedDelta
 
       guard await model.setBoostVolume(client, to: newVol, action: "adjust") else { return }
       model.appliedAtmosBoost = max(0, model.appliedAtmosBoost + actualDelta)
@@ -1004,10 +1015,13 @@ struct AppSettings: Codable {
         if self.appliedAtmosBoost > 0, let client = self.ambeoClient {
           let boost = self.appliedAtmosBoost
           let current = await client.state.volume
-          let minVol =
-            (await client.getEntry(for: AmbeoEndpoint.Player.Volume()))?.edit.flatMap { $0.min }
-            ?? 0
-          let newVol = max(minVol, current - boost)
+          let newVol = VolumeAdjustment.clamped(
+            current - boost,
+            min: (await client.getEntry(for: AmbeoEndpoint.Player.Volume()))?.edit.flatMap {
+              $0.min
+            },
+            max: nil
+          )
           do {
             try await client.set(
               AmbeoEndpoint.Player.Volume(),

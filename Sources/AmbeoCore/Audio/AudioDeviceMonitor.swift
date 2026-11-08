@@ -101,7 +101,8 @@ public struct AudioPhysicalFormat: Sendable, Identifiable, Hashable, Codable {
 
 private enum EncodedAudioFormatID {
   // Apple / CoreAudio 内部ビットストリーム識別子 (HDMI / eARC で実測・ネゴシエーションされる識別子)
-  static let dolbyEAC3CCPlus3 = fourCC("cc+3")  // 1_667_443_507 (実機ログで実測: 2ch 16-bit 192kHz ['cc+3'])
+  // 1_667_443_507 (実機ログで実測: 2ch 16-bit 192kHz ['cc+3'])
+  static let dolbyEAC3CCPlus3 = fourCC("cc+3")
   static let dolbyEAC3CDPlus3 = fourCC("cd+3")  // 1_667_509_043
   static let enhancedAC3Internal = fourCC("cec3")  // 1_667_588_915
   static let dolbyMATInternalA = fourCC("mtat")
