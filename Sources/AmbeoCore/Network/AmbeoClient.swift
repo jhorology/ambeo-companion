@@ -6,6 +6,12 @@ extension Notification.Name {
 }
 
 public actor AmbeoClient {
+  /// Per-request timeout for calls that gate user-visible safety behaviour: mute / unmute, and the
+  /// volume writes that apply or revert Atmos Boost. The session-wide `timeoutIntervalForRequest`
+  /// is 10 s, which would let the soundbar stay muted well past the Stealth Rewind safety window,
+  /// and would stretch app termination by tens of seconds when the device is unresponsive.
+  public static let interactiveTimeout: TimeInterval = 2.0
+
   public let host: String
   private let session: URLSession
   private let decoder = JSONDecoder()
@@ -130,7 +136,10 @@ public actor AmbeoClient {
     }
   }
 
-  private func fetchDirectValue<E: AmbeoEndpointProtocol>(for endpoint: E) async -> E.Payload? {
+  private func fetchDirectValue<E: AmbeoEndpointProtocol>(
+    for endpoint: E,
+    timeout: TimeInterval? = nil
+  ) async -> E.Payload? {
     var components = URLComponents()
     components.scheme = "http"
     components.host = host
@@ -139,9 +148,10 @@ public actor AmbeoClient {
       URLQueryItem(name: "path", value: endpoint.path), URLQueryItem(name: "roles", value: "@all"),
       URLQueryItem(name: "_nocache", value: String(Int64(Date().timeIntervalSince1970 * 1000))),
     ]
-    guard let url = components.url, let (data, _) = try? await session.data(from: url) else {
-      return nil
-    }
+    guard let url = components.url else { return nil }
+    var request = URLRequest(url: url)
+    if let timeout { request.timeoutInterval = timeout }
+    guard let (data, _) = try? await session.data(for: request) else { return nil }
     if let single = try? decoder.decode(AmbeoEntry<E>.self, from: data) {
       stateCache[endpoint.path] = single
       return single.value
@@ -333,7 +343,10 @@ public actor AmbeoClient {
     }
   }
 
-  public func getValue<E: AmbeoEndpointProtocol>(for endpoint: E) async -> E.Payload? {
+  public func getValue<E: AmbeoEndpointProtocol>(
+    for endpoint: E,
+    timeout: TimeInterval? = nil
+  ) async -> E.Payload? {
     if let stored = latestValues[endpoint.path] {
       guard let latest = stored as? E.Payload else {
         Logger.network.error(
@@ -343,12 +356,15 @@ public actor AmbeoClient {
       }
       return latest
     }
-    return await getEntry(for: endpoint)?.value
+    return await getEntry(for: endpoint, timeout: timeout)?.value
   }
 
-  public func getEntry<E: AmbeoEndpointProtocol>(for endpoint: E) async -> AmbeoEntry<E>? {
+  public func getEntry<E: AmbeoEndpointProtocol>(
+    for endpoint: E,
+    timeout: TimeInterval? = nil
+  ) async -> AmbeoEntry<E>? {
     if stateCache[endpoint.path] == nil {
-      if let value = await fetchDirectValue(for: endpoint) {
+      if let value = await fetchDirectValue(for: endpoint, timeout: timeout) {
         updateState(path: endpoint.path, newValue: value)
       }
     }
@@ -366,7 +382,8 @@ public actor AmbeoClient {
   public func set<E: AmbeoEndpointProtocol>(
     _ endpoint: E,
     valueJSON: String,
-    role: String = "value"
+    role: String = "value",
+    timeout: TimeInterval? = nil
   ) async throws {
     var components = URLComponents()
     components.scheme = "http"
@@ -382,6 +399,7 @@ public actor AmbeoClient {
     var request = URLRequest(url: url)
     // AMBEO `/api/setData` takes the new value in the query string and expects GET.
     request.httpMethod = "GET"
+    if let timeout { request.timeoutInterval = timeout }
 
     let (data, response) = try await session.data(for: request)
     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
@@ -408,14 +426,14 @@ public actor AmbeoClient {
 
   /// Removes an offset using a fresh hardware read, including after a lost poll connection.
   /// False means no usable volume was fetched; callers must preserve their recovery ledger.
-  public func removeVolumeBoost(_ amount: Int) async throws -> Bool {
+  public func removeVolumeBoost(_ amount: Int, timeout: TimeInterval? = nil) async throws -> Bool {
     guard amount > 0 else { return true }
     let endpoint = AmbeoEndpoint.Player.Volume()
-    guard let current = await fetchDirectValue(for: endpoint),
+    guard let current = await fetchDirectValue(for: endpoint, timeout: timeout),
       let entry = stateCache[endpoint.path] as? AmbeoEntry<AmbeoEndpoint.Player.Volume>
     else { return false }
     let volume = max(entry.edit?.min ?? 0, current - amount)
-    try await set(endpoint, valueJSON: "{\"type\":\"i32_\",\"i32_\":\(volume)}")
+    try await set(endpoint, valueJSON: "{\"type\":\"i32_\",\"i32_\":\(volume)}", timeout: timeout)
     return true
   }
 

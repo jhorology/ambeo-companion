@@ -188,6 +188,11 @@ struct AmbeoCompanionApp: App {
 }
 
 @MainActor final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
+  /// Upper bound for `prepareForTermination()`. Its cleanup contains several HTTP requests (unmute,
+  /// boost revert, client shutdown), so an unresponsive soundbar must not hang Quit. Work that does
+  /// not finish keeps its ledger state (boost / mute), and the next launch reconciles it.
+  private static let terminationGrace: Duration = .seconds(2.5)
+
   private var isTerminating = false
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -195,7 +200,19 @@ struct AmbeoCompanionApp: App {
     guard !isTerminating else { return .terminateLater }
     isTerminating = true
     Task {
-      await model.prepareForTermination()
+      await withTaskGroup(of: Void.self) { group in
+        group.addTask { await model.prepareForTermination() }
+        group.addTask {
+          try? await Task.sleep(for: Self.terminationGrace)
+          if !Task.isCancelled {
+            Logger.lifecycle.warning(
+              "Termination cleanup exceeded the grace period; quitting with unfinished work."
+            )
+          }
+        }
+        _ = await group.next()
+        group.cancelAll()
+      }
       sender.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater

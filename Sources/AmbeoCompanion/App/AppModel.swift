@@ -83,6 +83,10 @@ struct AppSettings: Codable {
   }
   private var atmosDeactivationTask: Task<Void, Never>?
   private var atmosTransitionTask: Task<Void, Never>?
+  /// Why an Atmos Boost volume write was skipped while the user had muted the soundbar. Every
+  /// `player:volume` write unmutes AMBEO hardware, so the adjustment is deferred and replayed on
+  /// the next unmute instead of overriding the user's mute.
+  private var deferredBoostReasonWhileMuted: String? = nil
   private var lastOSDTask: Task<Void, Never>?
 
   var settings: AppSettings {
@@ -136,6 +140,9 @@ struct AppSettings: Codable {
   }
 
   private(set) var networkDevices: [SennheiserNetworkDevice] = []
+  /// When mDNS browsing last started. The Local Network permission has no public API, so the
+  /// Permissions window uses this to tell "discovery is still warming up" from "nothing found".
+  private(set) var discoveryStartedAt: ContinuousClock.Instant? = nil
   private(set) var currentAudioDevice: AudioDevice? = nil
   private(set) var availableAudioDevices: [AudioDevice] = []
   private(set) var ambeoClient: AmbeoClient? = nil
@@ -185,7 +192,8 @@ struct AppSettings: Codable {
         }
         try await client.set(
           AmbeoEndpoint.Player.Mute(),
-          valueJSON: "{\"type\":\"bool_\",\"bool_\":\(muted)}"
+          valueJSON: "{\"type\":\"bool_\",\"bool_\":\(muted)}",
+          timeout: AmbeoClient.interactiveTimeout
         )
         await self.refreshSoundbarState(from: client)
       },
@@ -337,6 +345,7 @@ struct AppSettings: Codable {
 
   private func startDiscoveringAmbeo() {
     discoveringAmbeoTask?.cancel()
+    discoveryStartedAt = .now
     discoveringAmbeoTask = Task {
       for await devices in SennheiserDiscovery.browse() {
         self.networkDevices = devices
@@ -601,13 +610,18 @@ struct AppSettings: Codable {
       do {
         try await client.set(
           AmbeoEndpoint.Player.Mute(),
-          valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMute)}"
+          valueJSON: "{\"type\":\"bool_\",\"bool_\":\(newMute)}",
+          timeout: AmbeoClient.interactiveTimeout
         )
       } catch {
         Logger.audio.warning("Media key: failed to set mute (\(error.localizedDescription))")
         return
       }
       await syncAndShowOverlay(explicitMute: newMute)
+      if !newMute {
+        // Telemetry usually delivers this too; the direct call keeps the replay deterministic.
+        self.replayDeferredAtmosVolumeWork(afterUnmute: "media key")
+      }
 
     case .soundUp, .soundDown:
       guard let entry = await client.getEntry(for: AmbeoEndpoint.Player.Volume()) else { return }
@@ -640,9 +654,16 @@ struct AppSettings: Codable {
     Task { @MainActor [weak self] in
       guard let self, let client = self.ambeoClient else { return }
 
+      let wasMuted = self.soundbarState?.isMuted
       let latestState = await client.state
       guard client === self.ambeoClient else { return }
       self.soundbarState = latestState
+
+      // An unmute is the signal to replay the Atmos Boost volume write that `setBoostVolume`
+      // deferred because a volume write would have unmuted the soundbar.
+      if path == AmbeoEndpoint.Player.Mute().path, wasMuted == true, !latestState.isMuted {
+        self.replayDeferredAtmosVolumeWork(afterUnmute: "mute telemetry")
+      }
 
       // Decoder audio format change: detect Dolby Atmos from soundbar DSP
       if path == AmbeoEndpoint.Audio.DecoderAudioFormat().path {
@@ -759,11 +780,22 @@ struct AppSettings: Codable {
   }
 
   /// Sets the soundbar volume for Atmos Boost. `appliedAtmosBoost` is updated by the caller only when this succeeds.
+  /// Returns false when the write was skipped (muted, or the request failed); the caller keeps its boost state.
   private func setBoostVolume(_ client: AmbeoClient, to volume: Int, action: String) async -> Bool {
+    // Writing `player:volume` on AMBEO hardware automatically unmutes the soundbar. A user mute
+    // outranks the boost: defer it and replay on the next unmute.
+    if await isSoundbarMuted(client) {
+      deferredBoostReasonWhileMuted = action
+      Logger.audio.info(
+        "Atmos Boost \(action) skipped: soundbar is muted, and a volume write would unmute it. Will retry when unmuted (\(isAtmosActive ? "Atmos active" : "stereo"))."
+      )
+      return false
+    }
     do {
       try await client.set(
         AmbeoEndpoint.Player.Volume(),
-        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(volume)}"
+        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(volume)}",
+        timeout: AmbeoClient.interactiveTimeout
       )
       return true
     } catch {
@@ -771,6 +803,37 @@ struct AppSettings: Codable {
         "Atmos Boost \(action) failed: \(error.localizedDescription). Keeping boost state (\(appliedAtmosBoost)%)."
       )
       return false
+    }
+  }
+
+  /// Whether the soundbar is muted. `getValue` reads the client's in-memory `latestValues`, which
+  /// the long-poll subscription queue keeps fresh, so this is not an extra request (it fetches only
+  /// when nothing is cached yet). When no value is available the cached snapshot is used, and an
+  /// unknown state counts as muted because deferring is recoverable while silently unmuting is not.
+  private func isSoundbarMuted(_ client: AmbeoClient) async -> Bool {
+    if let fresh = await client.getValue(
+      for: AmbeoEndpoint.Player.Mute(),
+      timeout: AmbeoClient.interactiveTimeout
+    ) {
+      return fresh
+    }
+    return soundbarState?.isMuted ?? true
+  }
+
+  /// Replays the Atmos Boost volume write that `setBoostVolume` deferred while the soundbar was
+  /// muted. The target is recomputed from the current state, so a mute spanning an Atmos
+  /// transition ends up with the correct direction (apply while Atmos, revert in stereo).
+  private func replayDeferredAtmosVolumeWork(afterUnmute reason: String) {
+    guard let action = deferredBoostReasonWhileMuted else { return }
+    deferredBoostReasonWhileMuted = nil
+    guard !isShuttingDown, settings.atmosBoostAmount > 0 else { return }
+    Logger.audio.info("Soundbar unmuted (\(reason)); replaying deferred Atmos Boost \(action).")
+    if isAtmosActive {
+      // Recomputes `atmosBoostAmount - appliedAtmosBoost` at run time, covering both apply and
+      // slider-adjust cases, and serializes its own volume write.
+      handleAtmosBoostAmountChanged(from: settings.atmosBoostAmount, to: settings.atmosBoostAmount)
+    } else {
+      enqueueAtmosWork { await $0.handleAtmosTransition(isAtmos: false) }
     }
   }
 
@@ -853,7 +916,11 @@ struct AppSettings: Codable {
     let uid = connectedUid
     let boost = boostLedger.amount(for: uid)
     guard boost > 0 else { return }
-    do { if try await client.removeVolumeBoost(boost) { boostLedger.record(0, for: uid) } } catch {
+    do {
+      if try await client.removeVolumeBoost(boost, timeout: AmbeoClient.interactiveTimeout) {
+        boostLedger.record(0, for: uid)
+      }
+    } catch {
       Logger.audio.warning(
         "Boost cleanup failed: \(error.localizedDescription). Preserving device ledger."
       )
@@ -928,7 +995,8 @@ struct AppSettings: Codable {
           do {
             try await client.set(
               AmbeoEndpoint.Player.Volume(),
-              valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}"
+              valueJSON: "{\"type\":\"i32_\",\"i32_\":\(newVol)}",
+              timeout: AmbeoClient.interactiveTimeout
             )
             self.appliedAtmosBoost = 0
             self.isAtmosActive = false

@@ -19,9 +19,10 @@ It resolves volume adjustment limitations in macOS eARC / HDMI passthrough setup
   - Smoothly tracks the active screen in multi-monitor setups with fluid fade animations.
 - **Atmos Boost (Automatic Dolby Atmos Volume Compensation)**:
   - Automatically boosts playback volume by a configurable amount (0–40%) during Dolby Atmos playback, eliminating noticeable volume drops when switching between Dolby Atmos (Spatial Audio) and stereo PCM tracks in mixed playlists.
+  - The boost is deferred while the soundbar is muted — every AMBEO volume write unmutes the hardware — and is applied as soon as you unmute.
 - **Stealth Rewind (Experimental)**:
   - Prevents the beginning of tracks in Apple Music (`Music.app`) from being cut off during HDMI/eARC physical format transitions (e.g., switching between Stereo PCM and Dolby Atmos).
-  - When a format change is detected while `Music.app` is playing, the app immediately mutes the AMBEO Soundbar, waits for the soundbar decoder to lock onto the new input format, rewinds `Music.app` to `0:00` via Automation, waits a configurable delay (`Stealth Rewind Delay`, default 250 ms) for pre-seek audio buffers to drain, and then unmutes (enforcing a 5-second safety timeout so the soundbar is never left muted).
+  - When a format change is detected while `Music.app` is playing, the app immediately mutes the AMBEO Soundbar, waits for the soundbar decoder to lock onto the new input format, rewinds `Music.app` to `0:00` via Automation, waits a configurable delay (`Stealth Rewind Delay`, default 250 ms) for pre-seek audio buffers to drain, and then unmutes (the 5-second safety timeout is armed when the transition starts, so it also covers a slow mute request; mute and unmute requests are capped at 2 s each, and the soundbar is never left muted).
 - **Fallback Audio Format Control**:
   - Automatically falls back to a designated format (e.g., 48 kHz 2ch) when Dolby Atmos is not playing, preventing macOS from defaulting to 192 kHz and causing unnecessary processing overhead or latency.
 - **Auto Standby Control & Automatic Sync (Fixes Idle Sleep Issues)**:
@@ -112,8 +113,11 @@ Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed
 
 - **System Settings > Privacy & Security > Device Control and Data Access** (macOS 27+) or **Accessibility** (earlier macOS)
 - **System Settings > Privacy & Security > Automation > Ambeo Companion > Music** (required when Stealth Rewind is enabled)
+- **System Settings > Privacy & Security > Local Network** (macOS 15+; required for mDNS device discovery)
 
 If `AmbeoCompanion.app` is not listed under Device Control and Data Access / Accessibility, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on. For Automation, click **Allow Access** in the app's Permissions window to trigger the macOS consent prompt.
+
+Local Network access has no public API, so the app's Permissions window can only infer it: it reports **Allowed** once mDNS discovery returns a soundbar, and **No soundbar found** when the result stays empty. If discovery finds nothing, open that pane and allow Ambeo Companion. `Scripts/install.sh` resets this grant as well.
 
 Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset the TCC registrations and launch permission onboarding. If media keys or Stealth Rewind do not work, run the script or toggle the switches off and back on in each pane.
 

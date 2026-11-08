@@ -10,11 +10,18 @@ import Logging
 /// 4. Rewind `Music.app` playback position to `0` via Automation
 /// 5. Wait a configurable settle delay (`settleDelay`) for the pre-seek buffer to drain
 /// 6. Unmute AMBEO (with a safety timeout so the soundbar is never left muted)
+///
+/// The safety window starts when the session starts, before any request is sent: every step
+/// (mute-state read, mute, unmute) is an HTTP request that can block for the full URLSession
+/// timeout, and the soundbar becomes muted as soon as the mute request reaches it, not when the
+/// response arrives.
 @MainActor public final class StealthRewindCoordinator {
   public static let defaultSettleDelay: Duration = .milliseconds(250)
   public static let defaultMuteTimeout: Duration = .seconds(5)
 
-  private enum Phase: Equatable {
+  /// Internal (not private) so `@testable` tests can observe that the safety deadline, and not a
+  /// completed RPC, drives the cleanup.
+  enum Phase: Equatable {
     case idle
     case waitingForInitialLock
     case rewindingAndSettling
@@ -32,7 +39,7 @@ import Logging
 
   private var lastObservedFormat: (deviceID: AudioDeviceID, format: AudioPhysicalFormat)?
   private var sessionID: Int = 0
-  private var phase: Phase = .idle
+  private(set) var phase: Phase = .idle
   public var isSessionActive: Bool { phase != .idle }
   public private(set) var isSuppressingMuteOSD: Bool = false
 
@@ -137,6 +144,11 @@ import Logging
     rewindInstant = nil
     clearOSDSuppressionTask?.cancel()
     isSuppressingMuteOSD = true
+    // Arm the safety window before the first request. A mute that lands while a hung request is
+    // still pending must not stay applied for `URLSession` timeout + `muteTimeout`; the timer owns
+    // cleanup at the deadline, and `unmuteIfNeeded` still waits for the in-flight mute so a late
+    // mute can never land after the unmute.
+    startTimeoutTask(for: currentID)
 
     let muteState = await isMutedProvider()
     guard phase != .finishing, isSessionActive, sessionID == currentID else { return }
@@ -176,7 +188,8 @@ import Logging
 
     guard phase != .finishing, isSessionActive, sessionID == currentID else { return }
 
-    startTimeoutTask(for: currentID)
+    // The safety timer was armed before Step 2, so a mute request that blocks past the deadline
+    // has already been handed to the timeout task's cleanup path.
 
     // If switching between Atmos and Stereo and the soundbar already reported the new locked format
     // just before CoreAudio's callback arrived, begin Step 4 rewind immediately; otherwise wait for Step 3.
@@ -267,7 +280,7 @@ import Logging
       do { try await Task.sleep(for: timeout) } catch { return }
       guard let self, self.isSessionActive, self.sessionID == id else { return }
       Logger.audio.warning(
-        "Stealth Rewind: Mute timeout (\(timeout)) expired waiting for AMBEO format switch (\(self.elapsedSummary())). Unmuting AMBEO."
+        "Stealth Rewind: Mute timeout (\(timeout)) expired during mute request or AMBEO format lock (\(self.elapsedSummary())). Unmuting AMBEO."
       )
       await self.endSession(id: id, stepLabel: "timeout")
     }

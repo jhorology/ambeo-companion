@@ -40,7 +40,7 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
   @MainActor func requestAndOpenSettings(onComplete: (@MainActor @Sendable () async -> Void)? = nil)
   {
     switch self {
-    case .accessibility: Self.openSystemSettings(anchor: "Privacy_Accessibility")
+    case .accessibility: Self.openPrivacyPane(anchor: "Privacy_Accessibility")
 
     case .musicAutomation:
       Task { @MainActor in
@@ -50,16 +50,17 @@ enum MediaKeyPermission: CaseIterable, Identifiable {
           let status = await MusicPlayerController.shared.requestPermission()
           await onComplete?()
           if wasAlreadyGranted || status != .granted {
-            Self.openSystemSettings(anchor: "Privacy_Automation")
+            Self.openPrivacyPane(anchor: "Privacy_Automation")
           }
         } else {
-          Self.openSystemSettings(anchor: "Privacy_Automation")
+          Self.openPrivacyPane(anchor: "Privacy_Automation")
         }
       }
     }
   }
 
-  @MainActor private static func openSystemSettings(anchor: String) {
+  /// Shared by the media-key rows and the Local Network row in the Permissions window.
+  @MainActor static func openPrivacyPane(anchor: String) {
     for pane in ["com.apple.settings.PrivacySecurity.extension", "com.apple.preference.security"] {
       if let url = URL(string: "x-apple.systempreferences:\(pane)?\(anchor)"),
         NSWorkspace.shared.open(url)

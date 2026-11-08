@@ -6,13 +6,39 @@ where T: Sendable {
 
   public init(wrappedValue: T? = nil) { self.wrappedValue = wrappedValue }
 
+  /// AMBEO firmware has been observed to send `edit.min/max/step` as JSON strings (`"1"`), and it
+  /// can answer the same fields as bare numbers (`1`, `1.5`). Accept strings, integers, doubles,
+  /// and booleans so a numeric reply does not silently drop to the caller's fallback defaults
+  /// (volume step 1, range 0...100).
   public init(from decoder: Decoder) throws {
     let container = try decoder.singleValueContainer()
+    if container.decodeNil() {
+      self.wrappedValue = nil
+      return
+    }
     if let stringValue = try? container.decode(String.self) {
       self.wrappedValue = T(stringValue)
-    } else {
-      self.wrappedValue = nil
+      return
     }
+    if let intValue = try? container.decode(Int.self) {
+      self.wrappedValue = T(String(intValue))
+      return
+    }
+    if let doubleValue = try? container.decode(Double.self) {
+      // `T` may be Int, which cannot parse "25.0"; normalise integral doubles first.
+      if doubleValue == doubleValue.rounded(), abs(doubleValue) < 1e15 {
+        self.wrappedValue = T(String(Int64(doubleValue))) ?? T(String(doubleValue))
+      } else {
+        self.wrappedValue = T(String(doubleValue))
+      }
+      return
+    }
+    if let boolValue = try? container.decode(Bool.self) {
+      self.wrappedValue = T(boolValue ? "true" : "false")
+      return
+    }
+    // Unrecognised JSON (object, array): keep the existing lenient behaviour of decoding to nil.
+    self.wrappedValue = nil
   }
 }
 

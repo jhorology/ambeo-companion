@@ -19,6 +19,18 @@ public enum AmbeoEndpoint {
         @Stringified public var min: Int?
         @Stringified public var max: Int?
         @Stringified public var step: Int?
+
+        enum CodingKeys: String, CodingKey { case min, max, step }
+
+        /// Every key is decoded optionally. Firmware omits fields inside `edit`, and a required key
+        /// would fail the whole entry, silently dropping callers to their fallback range.
+        public init(from decoder: Decoder) throws {
+          let container = try decoder.container(keyedBy: CodingKeys.self)
+          _min = try container.decodeIfPresent(Stringified<Int>.self, forKey: .min) ?? Stringified()
+          _max = try container.decodeIfPresent(Stringified<Int>.self, forKey: .max) ?? Stringified()
+          _step =
+            try container.decodeIfPresent(Stringified<Int>.self, forKey: .step) ?? Stringified()
+        }
       }
 
       public init() {}
@@ -50,7 +62,17 @@ public enum AmbeoEndpoint {
         "adaptive", "music", "movie", "news", "neutral", "sports",
       ]
 
-      public struct Edit: Decodable, Sendable { public let enumPath: String? }
+      public struct Edit: Decodable, Sendable {
+        public let enumPath: String?
+
+        enum CodingKeys: String, CodingKey { case enumPath }
+
+        /// Optional for the same reason as `Player.Volume.Edit`: a missing key must not fail the entry.
+        public init(from decoder: Decoder) throws {
+          let container = try decoder.container(keyedBy: CodingKeys.self)
+          enumPath = try container.decodeIfPresent(String.self, forKey: .enumPath)
+        }
+      }
 
       public init() {}
       public func apply(_ value: Payload, to state: inout AmbeoState) {

@@ -11,16 +11,25 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.26</string>
+    <string>0.1.27</string>
     <key>CFBundleVersion</key>
-    <string>26</string>
+    <string>27</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
     <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
     <string>Ambeo Companion needs access to Music to check playback state and rewind tracks during audio format transitions (Stealth Rewind).</string>
+    <key>NSBonjourServices</key>
+    <array>
+      <!-- Must match the browse type in Sources/AmbeoCore/Network/SennheiserDiscovery.swift -->
+      <string>_sennheiser._tcp.</string>
+    </array>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Ambeo Companion finds your AMBEO Soundbar on the local network (mDNS) and reads and changes its settings over HTTP.</string>
   </dict>
 </plist>

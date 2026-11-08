@@ -3,9 +3,12 @@
 # privacy grants that an ad-hoc signature invalidates:
 #   - Accessibility — active CGEvent tap that consumes media keys
 #   - AppleEvents   — automating Music.app for Stealth Rewind
+#   - LocalNetwork  — mDNS browsing that discovers the soundbar (macOS 15+)
 #
 # macOS does not allow a script to turn the switches on. This resets the stale
-# TCC entries and launches the app's permission onboarding.
+# TCC entries and launches the app's permission onboarding. Local Network has no
+# public API, so the app's Permissions window cannot report it; it is reset here
+# only so the system prompt (NSLocalNetworkUsageDescription) appears again.
 
 set -euo pipefail
 
@@ -44,6 +47,7 @@ echo "==> [3/4] Reset privacy grants for ${BUNDLE_ID}"
 # Clear the previous cdhash. A switch that still looks on is not valid after re-signing.
 tccutil reset Accessibility "$BUNDLE_ID" || echo "Warning: Failed to reset Accessibility permissions."
 tccutil reset AppleEvents "$BUNDLE_ID" || echo "Warning: Failed to reset Automation permissions."
+tccutil reset LocalNetwork "$BUNDLE_ID" || echo "Warning: Failed to reset Local Network permissions."
 
 echo "==> [4/4] Launch permission onboarding"
 open "$DEST"

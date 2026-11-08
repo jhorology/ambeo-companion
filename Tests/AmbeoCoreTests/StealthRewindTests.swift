@@ -232,6 +232,67 @@ struct StealthRewindTests {
     #expect(events == ["mute(true)", "mute(false)"])
   }
 
+  @Test("A mute request slower than the safety window ends the session at the deadline")
+  @MainActor
+  func slowMuteRequestEndsSessionAtDeadline() async throws {
+    let music = MockMusicPlayer()
+    var events: [String] = []
+    var isMuted = false
+    var muteRequested = false
+
+    let coordinator = StealthRewindCoordinator(
+      settleDelay: .milliseconds(10),
+      muteTimeout: .milliseconds(60),
+      musicPlayer: music,
+      isMutedProvider: { false },
+      setMute: { muted in
+        if muted {
+          // Simulate a mute RPC that blocks far longer than the safety window, as a soundbar that
+          // is disappearing from the network does.
+          muteRequested = true
+          try await Task.sleep(for: .milliseconds(300))
+        }
+        isMuted = muted
+        events.append("mute(\(muted))")
+      },
+      currentSoundbarFormatProvider: { nil }
+    )
+
+    let deviceID: AudioDeviceID = 42
+    await coordinator.handleCoreAudioFormatChange(
+      Self.stereoLPCM,
+      deviceID: deviceID,
+      isEnabled: true,
+      isClientConnected: true
+    )
+    let transition = Task { @MainActor in
+      await coordinator.handleCoreAudioFormatChange(
+        Self.atmosEAC3,
+        deviceID: deviceID,
+        isEnabled: true,
+        isClientConnected: true
+      )
+    }
+    while !muteRequested { await Task.yield() }
+
+    // The deadline owns cleanup: it expires while the mute request is still in flight, so the
+    // session is already `.finishing` long before the RPC returns. Arming the timer only after
+    // Step 2 completed would have left it `.waitingForInitialLock` here.
+    try await Task.sleep(for: .milliseconds(120))
+    #expect(coordinator.phase == .finishing)
+    // `.finishing` counts as active so Atmos Boost keeps deferring its volume write.
+    #expect(coordinator.isSessionActive)
+    // The unmute waits for the in-flight mute, so it cannot have been sent yet.
+    #expect(events.isEmpty)
+
+    await transition.value
+    #expect(coordinator.phase == .idle)
+    #expect(!coordinator.isSessionActive)
+    #expect(!isMuted)
+    #expect(events == ["mute(true)", "mute(false)"])
+    #expect(music.rewindCallCount == 0)
+  }
+
   @Test("Skips Stealth Rewind when Music.app is not playing or not running")
   @MainActor
   func skipsWhenMusicNotPlaying() async {
