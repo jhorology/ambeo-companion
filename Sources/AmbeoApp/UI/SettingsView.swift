@@ -213,7 +213,7 @@ struct SettingsView: View {
         HStack {
           Spacer()
           let version =
-            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.26"
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.28"
           Text("Ambeo Companion v\(version)").font(.footnote).foregroundStyle(.tertiary)
           Spacer()
         }
