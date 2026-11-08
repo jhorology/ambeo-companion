@@ -1,12 +1,5 @@
-import AmbeoCore
-import Foundation
-import Logging
+import AmbeoApp
 
-extension Bundle {
-  static var id: String { main.bundleIdentifier ?? "io.github.jhorology.ambeo-companion.dev" }
-}
-
-LogManager.setup(bid: Bundle.id)
-Logger.lifecycle.debug("Start with Bundle ID: \(Bundle.id)")
-
-AmbeoCompanionApp.main()
+// Top-level entry point. Everything lives in the AmbeoApp library so it can be tested;
+// SPM cannot build a test target against an executableTarget.
+AmbeoAppMain.run()

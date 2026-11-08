@@ -392,7 +392,7 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 ### 12. `AppModel.swift` が責務過多でテスト不能域がある
 
-**優先度：中／部分対応（2026-11-08）**
+**優先度：中／対応済み（2026-11-08・実機確認は未実施）**
 
 `@Observable AppModel` に7責務（設定永続化 / 接続 / 検出 / CoreAudio / メディアキー / Atmos / OSD / 電源通知）。Stealth Rewind と Recovery は手厚くテストされている一方、**再接続・IP 変更・スリープ復帰・Boost 台帳**（過去に実バグが出た場所）はテストできない。
 
@@ -407,11 +407,50 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 新規9テスト（`VolumeAdjustmentTests` 5件／`LocalNetworkPermissionStatusTests` 4件）。swift-testing は 24件 → **39件**になった。
 
-#### 残る課題と、そこに必要な手順
+#### 構造の変更（2026-11-08・残りを実施）
 
-AppModel は現在 **1296行**（今回の対応で増加）。未だテストできない領域: 再接続／IP 変更判定／スリープ復帰／telemetry 処理／メディアキーの手順／Boost 台帳の適用順序。
+`AppModel` をテスト可能にするため、**アプリ本体をライブラリターゲット `AmbeoApp` へ移した**。SPM は *executableTarget の testTarget を許可しない*ため、これが唯一の筋の通った方法だった。
 
-根本解決には **`AppModel` をライブラリターゲットへ移す**必要がある。SPM は *executableTarget の testTarget を許可しない*（`Package.swift:21-28` で `AmbeoCompanion` は executableTarget、テストターゲットは `AmbeoCore` に対するものだけ）ため、アプリ側コードは現状テスト不能だ。AppKit 依存は AmbeoCore に既にある（MusicPlayerController / SystemEventMonitor）ので移動は可能で、SwiftUI の View はアプリ側に残せる。
+| ターゲット | 中身 |
+| --- | --- |
+| `AmbeoCore`（変更なし） | 機器通信・CoreAudio・Stealth Rewind など基盤 |
+| **`AmbeoApp`（新規）** | AppModel / AppSettings / SwiftUI シーン / delegate / Views / Shortcuts / MediaKeyPermissions / `TerminationGuard` |
+| `AmbeoCompanion`（実行ファイル） | `main.swift` の shim だけ。`AmbeoAppMain.run()` を呼ぶ |
+
+**可視性を広げなくて済む**のがこの構成を選ぶ理由だった（`@testable import AmbeoApp` で internal に届く）。ライブラリに `@main` は置かず、`AmbeoCompanionApp.main()` を shim から呼んでいる。実行ファイルは静的リンクされ、`.app` は従来どおり単一バイナリ（`otool -L` に Ambeo 製 dylib は出ない）。
+
+テスト用のシーム（すべて internal、既定値で本番動作は不変）:
+
+| シーム | 目的 |
+| --- | --- |
+| `init(settings:autostart:volumeOverlay:)` | `autostart: false` で mDNS / CoreAudio / event tap / グローバルショートカットを起動せずに AppModel を構築 |
+| `VolumeOverlayPresenting` | NSPanel を開く代わりに提示回数が記録できる |
+| `ambeoClient` の setter | スクリプト化した機器（`URLProtocol`）を差し込む |
+| `appliedAtmosBoost` / `connectedUid` / `deferredBoostReasonWhileMuted` | 台帳の状態をアサートできる |
+| `shouldReconnectForIPChange(host:discoveredIP:)` | 再接続判定を純関数化 |
+| `TerminationGuard.run(grace:work:)` | Quit の猶予時間をテスト可能に（delegate から抽出） |
+
+#### 新規テスト（12件＋4件）
+
+`Tests/AmbeoAppTests/`（新規・12件）:
+
+- **Atmos Boost Mute Safety（4件）** — 🔴3 の本体。ミュート中に `setBoostVolume` が `false` を返し、**機器へ volume 書き込みが1本も届かない**こと／台帳が 0 のままなこと／非ミュートなら同じ書き込みが通ること／ミュート状態が不明（404）ならミュート扱いにすること／書き込み失敗時に台帳が前の Boost を保持すること
+- **Soundbar IP Change Decision（2件）** — client 無し・device 無し・空文字列で再接続しないこと
+- **Termination Grace Period（3件）** — 🟡13。猶予内に完了 / ハング時に猶予で抜ける（<2秒）/ 本番の猶予は 3秒以下
+- **App Target Structure（3件）** — `autostart: false` がサービスを開始しないこと、overlay シーム、Bundle id
+
+`Tests/AmbeoCoreTests/AtmosBoostLedgerTests.swift`（新規・4件）— 🟡6 の不変条件。台帳が**再起動をまたいで保持**されること（＝電源断後にリセットして二重 Boost しない）、機器ごとの分離、0 記録だけがクリア、空 uid は書き込まれない。
+
+#### 検証
+
+| 項目 | 結果 |
+| --- | --- |
+| `swift build -c release` | 警告ゼロ |
+| `swift test` | XCTest 15件（2件スキップ）＋ swift-testing **43件（AmbeoCore）＋12件（AmbeoApp）**、全パス |
+| リグレッション再現 | `setBoostVolume` のミュート判定を無効化 → **6アサーションが失敗**、復元すると全パス（テストが実際に 🔴3 を守っている） |
+| 実行スモーク | `.build/release/AmbeoCompanion` を起動して通常ログフローを確認（AppModel 起動・機器接続試行）。`.app` パッケージは codesign 有効・単一バイナリ |
+
+AppModel は 1296 行のまま（今回の対応で増加）。分割そのものは未実施だが、**再接続・IP 変更・Quit・Boost/ミュート安全ロジックがテストで守られる**状態になった。残る手動確認は実機のみ（🔴1 / 🔴3 / 🟡7 / 🟡9 / 🟡10 / 🟡13）。
 
 ### 13. 終了処理に上限時間がない
 
@@ -482,16 +521,15 @@ AppModel は現在 **1296行**（今回の対応で増加）。未だテスト�
 5. ✅ reconcile の自己取消回避（🟡9）
 6. ✅ `URLSession` の invalidate（🟡7）＋検出ディスパッチキューの共有（🟡8 アプリ側）
 7. ✅ TCC 権限の常時ポーリング削除 → 起動時＋イベント駆動（🟡10）
+8. ✅ mDNS 応答の妥当性検証（🟡11）
+9. ✅ CI ＋ Tests 整形（🟢）
+10. ✅ `AppModel` をライブラリターゲット `AmbeoApp` へ移動し、アプリ側テストを追加（🟡12 完了）
 
 **WON'T FIX（実機仕様・本機実測による）**
 
 - 🔴4 出力ストリーム選択の一般化
 - 🟡6 電源断をまたいだ台帳リセット（リセットは二重 Boost＝爆音）
 - 🟡8 の機器側購読キュー（機器組込 Web UI で調査済み、解放しなくても問題なし）
-
-8. ✅ mDNS 応答の妥当性検証（🟡11）
-9. ✅ CI ＋ Tests 整形（🟢）
-10. 🟡12 は**部分対応**（純ロジック抽出まで）。`AppModel` のライブラリ化は未着手
 
 ※ 終了 deadline（🟡13）＋ミュート系の per-request timeout（🟡14）も 2026-11-08 に対応済み。
 
@@ -507,6 +545,7 @@ AppModel は現在 **1296行**（今回の対応で増加）。未だテスト�
 | 2026-11-08 | 🟡6 電源断をまたいだ台帳リセット | **WON'T FIX**（AMBEO は音量を保持するため不整合が起きない。台帳リセットは二重 Boost＝爆音になる。不変条件を明記） |
 | 2026-11-08 | 🟡13 終了処理の上限時間 / 🟡14 ミュート系の per-request timeout | 対応済み（Quit 猶予 2.5秒、ミュート系書き込みは 2秒上限。新規テスト1件。実機での Quit 体感は未確認） |
 | 2026-11-08 | 🟡9 reconcile の自己取消 | 対応済み（didSet でストリームを再生成しない。単体テスト無し・実機確認は未実施） |
+| 2026-11-08 | 🟡12 AppModel のテスト可能域（構造） | 対応済み（アプリ本体を `AmbeoApp` ライブラリ化＋shim。新規テスト AmbeoApp 12件 / Ledger 4件。ミュート判定を外すと6アサーション失敗で回帰防止を実証） |
 | 2026-11-08 | 🟡11 mDNS 応答の検証 | 対応済み（`parse()` で TXT を検証し拒否理由をログ。新規6テスト。初版の ≤255 チェック漏れをテストが検出） |
 | 2026-11-08 | 🟡12 AppModel のテスト可能域 | **部分対応**（`VolumeAdjustment` と `LocalNetworkPermissionStatus` を AmbeoCore へ抽出・新規9テスト）。AppModel 自体のライブラリ化は未着手 |
 | 2026-11-08 | 🟢 CI・整形・Package.resolved | 対応済み（CI 新設、format.sh に Tests と非破壊 --check。**Package.resolved は元から追跡済み**という訂正あり） |
@@ -564,7 +603,19 @@ AppModel は現在 **1296行**（今回の対応で増加）。未だテスト�
 
 - `Sources/AmbeoCompanion/App/AppModel.swift` — 2秒ポーリング（`monitoringPermissionsTask`）を削除。起動時1回／`didBecomeActiveNotification`／メディアキー監視のストリーム終了時に更新し、スリープ復帰時の既存更新はそのまま
 
-### 🟡11・🟡12・🟢 の変更ファイル
+### 🟡12 構造変更（アプリ本体のライブラリ化）の変更ファイル
+
+- `Package.swift` — `AmbeoApp` ライブラリターゲットと `AmbeoAppTests` を追加、`AmbeoCompanion` は shim の実行ターゲットに
+- `Sources/AmbeoCompanion/main.swift` — `AmbeoAppMain.run()` を呼ぶ数行に
+- `Sources/AmbeoApp/AppMain.swift` — 新規（公開エントリポイント＋`Bundle.id`）
+- `Sources/AmbeoApp/App/{AppModel,AmbeoCompanionApp,MediaKeyPermissions,Shortcuts}.swift` — アプリ側から移動
+- `Sources/AmbeoApp/UI/{PermissionOnboardingView,SettingsView,VolumeOverlayManager}.swift` — 同上
+- `Sources/AmbeoApp/UI/VolumeOverlayPresenting.swift` — 新規（OSD シーム）
+- `Sources/AmbeoApp/App/TerminationGuard.swift` — 新規（Quit の猶予、delegate から抽出）
+- `Tests/AmbeoAppTests/{FakeSoundbar,AtmosBoostMuteSafetyTests,IPChangeDecisionTests,TerminationGuardTests,AppTargetStructureTests}.swift` — 新規
+- `Tests/AmbeoCoreTests/AtmosBoostLedgerTests.swift` — 新規
+
+### 🟡11・🟢 の変更ファイル
 
 - `Sources/AmbeoCore/Network/SennheiserDiscovery.swift` — `parse()` / `ParseFailure` / UUID・IPv4 検証・拒否ログ
 - `Tests/AmbeoCoreTests/SennheiserDiscoveryParsingTests.swift` — 新規（6テスト）

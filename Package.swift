@@ -17,13 +17,21 @@ let package = Package(
       dependencies: [.product(name: "Logging", package: "swift-log")],
       path: "Sources/AmbeoCore"
     ), .testTarget(name: "AmbeoCoreTests", dependencies: ["AmbeoCore"]),
-    // Targets are the basic building blocks of a package, defining a module or a test suite.
-    // Targets can depend on other targets in this package and products from dependencies.
+    // The app itself (AppModel, SwiftUI scenes, views, delegate). It is a library target on
+    // purpose: SPM refuses a test target for an executableTarget, and AppModel holds the
+    // reconnect / telemetry / Atmos Boost logic that needs real tests.
+    .target(
+      name: "AmbeoApp",
+      dependencies: [
+        "AmbeoCore", .product(name: "Logging", package: "swift-log"),
+        .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+      ],
+      path: "Sources/AmbeoApp"
+    ), .testTarget(name: "AmbeoAppTests", dependencies: ["AmbeoApp", "AmbeoCore"]),
+    // Thin shim: main.swift calls AmbeoAppMain.run().
     .executableTarget(
       name: "AmbeoCompanion",
-      dependencies: [
-        "AmbeoCore", .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
-      ],
+      dependencies: ["AmbeoApp"],
       path: "Sources/AmbeoCompanion",
       exclude: ["Info.plist", "AmbeoCompanion.entitlements", "Resources"]
     ),

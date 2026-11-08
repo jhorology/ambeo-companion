@@ -73,10 +73,12 @@ struct AppSettings: Codable {
   private var isCoreAudioAtmos: Bool = false
   private var isSoundbarAtmos: Bool = false
   private(set) var isAtmosActive: Bool = false
-  private var connectedUid = ""
+  /// Internal so tests can attribute ledger entries the way a connection does.
+  var connectedUid = ""
   private var isShuttingDown = false
   private let boostLedger = AtmosBoostLedger(key: "\(Bundle.id).AtmosBoostLedger")
-  private var appliedAtmosBoost: Int {
+  /// Internal so `@testable` tests can assert the ledger is untouched by a refused write.
+  var appliedAtmosBoost: Int {
     get { boostLedger.amount(for: connectedUid) }
     set { boostLedger.record(newValue, for: connectedUid) }
   }
@@ -85,7 +87,7 @@ struct AppSettings: Codable {
   /// Why an Atmos Boost volume write was skipped while the user had muted the soundbar. Every
   /// `player:volume` write unmutes AMBEO hardware, so the adjustment is deferred and replayed on
   /// the next unmute instead of overriding the user's mute.
-  private var deferredBoostReasonWhileMuted: String? = nil
+  var deferredBoostReasonWhileMuted: String? = nil
   private var lastOSDTask: Task<Void, Never>?
 
   var settings: AppSettings {
@@ -151,7 +153,9 @@ struct AppSettings: Codable {
   private(set) var discoveryStartedAt: ContinuousClock.Instant? = nil
   private(set) var currentAudioDevice: AudioDevice? = nil
   private(set) var availableAudioDevices: [AudioDevice] = []
-  private(set) var ambeoClient: AmbeoClient? = nil
+  /// Internal setter: only AppModel assigns it in the app, and `@testable` tests inject a client
+  /// pointed at a scripted device.
+  var ambeoClient: AmbeoClient? = nil
   private var disconnectingClient: AmbeoClient? = nil
   /// Snapshot of the soundbar state for SwiftUI observers such as the menu bar. `nil` until the
   /// client finishes its initial sync.
@@ -160,7 +164,7 @@ struct AppSettings: Codable {
 
   private var lastAudioPreset: String? = nil
 
-  let volumeOverlay = VolumeOverlayManager()
+  let volumeOverlay: any VolumeOverlayPresenting
   var launchAtLoginState: Bool = false
 
   var isLaunchAtLoginEnabled: Bool {
@@ -171,8 +175,18 @@ struct AppSettings: Codable {
     }
   }
 
-  init() {
-    if let data = UserDefaults.standard.data(forKey: storageKey),
+  /// `autostart` is false in tests. The production path starts mDNS browsing, CoreAudio
+  /// subscriptions, event taps, workspace notifications and global shortcuts - none of which a
+  /// unit test should touch. Tests inject a settings snapshot, an overlay recorder, and a client.
+  init(
+    settings initialSettings: AppSettings? = nil,
+    autostart: Bool = true,
+    volumeOverlay overlay: any VolumeOverlayPresenting = VolumeOverlayManager()
+  ) {
+    self.volumeOverlay = overlay
+    if let initialSettings {
+      settings = initialSettings
+    } else if let data = UserDefaults.standard.data(forKey: storageKey),
       let decoded = try? JSONDecoder().decode(AppSettings.self, from: data)
     {
       settings = decoded
@@ -208,6 +222,12 @@ struct AppSettings: Codable {
         return await client.state.audioFormat
       }
     )
+    if autostart { startServices() }
+  }
+
+  /// Everything that touches the system: launch-at-login status, discovery, CoreAudio, event taps,
+  /// permission state, notifications and global shortcuts.
+  private func startServices() {
     checkLaunchAtLoginStatus()
     startDiscoveringAmbeo()
     startMonitoringAudioDevice()
@@ -379,6 +399,14 @@ struct AppSettings: Codable {
     }
   }
 
+  /// The reconnect decision, kept as a pure function so it is testable. A missing client (nil
+  /// host) is not an IP change, and an empty discovered address is not usable - both must not
+  /// trigger the reconnect churn that previously dropped live sessions.
+  nonisolated static func shouldReconnectForIPChange(host: String?, discoveredIP: String?) -> Bool {
+    guard let host, !host.isEmpty, let discoveredIP, !discoveredIP.isEmpty else { return false }
+    return host != discoveredIP
+  }
+
   /// Reconnects if the selected device's IP still differs from the client's host after a short
   /// grace period. Re-verifying against the latest discovery data before reconnecting avoids
   /// thrashing when mDNS briefly reports a transient address that then reverts.
@@ -387,10 +415,14 @@ struct AppSettings: Codable {
     ipChangeTask = Task { [weak self] in
       try? await Task.sleep(for: .seconds(3))
       guard !Task.isCancelled, let self else { return }
-      guard let device = self.networkDevices.first(where: { $0.uuid == self.settings.ambeoUid }),
-        let host = await self.ambeoClient?.host, host != device.ip
+      let device = self.networkDevices.first(where: { $0.uuid == self.settings.ambeoUid })
+      let host = await self.ambeoClient?.host
+      guard let discoveredIP = device?.ip,
+        Self.shouldReconnectForIPChange(host: host, discoveredIP: discoveredIP)
       else { return }
-      Logger.network.info("Soundbar IP changed (\(host) -> \(device.ip)). Reconnecting.")
+      Logger.network.info(
+        "Soundbar IP changed (\(host ?? "nil") -> \(discoveredIP)). Reconnecting."
+      )
       self.reconnectAmbeoClient()
     }
   }
@@ -667,7 +699,7 @@ struct AppSettings: Codable {
 
   // MARK: - Remote Control & Status Change Sync
 
-  private func handleAmbeoStatusChange(path: String, isExternal: Bool) {
+  func handleAmbeoStatusChange(path: String, isExternal: Bool) {
     Task { @MainActor [weak self] in
       guard let self, let client = self.ambeoClient else { return }
 
@@ -798,7 +830,7 @@ struct AppSettings: Codable {
 
   /// Sets the soundbar volume for Atmos Boost. `appliedAtmosBoost` is updated by the caller only when this succeeds.
   /// Returns false when the write was skipped (muted, or the request failed); the caller keeps its boost state.
-  private func setBoostVolume(_ client: AmbeoClient, to volume: Int, action: String) async -> Bool {
+  func setBoostVolume(_ client: AmbeoClient, to volume: Int, action: String) async -> Bool {
     // Writing `player:volume` on AMBEO hardware automatically unmutes the soundbar. A user mute
     // outranks the boost: defer it and replay on the next unmute.
     if await isSoundbarMuted(client) {
@@ -827,7 +859,7 @@ struct AppSettings: Codable {
   /// the long-poll subscription queue keeps fresh, so this is not an extra request (it fetches only
   /// when nothing is cached yet). When no value is available the cached snapshot is used, and an
   /// unknown state counts as muted because deferring is recoverable while silently unmuting is not.
-  private func isSoundbarMuted(_ client: AmbeoClient) async -> Bool {
+  func isSoundbarMuted(_ client: AmbeoClient) async -> Bool {
     if let fresh = await client.getValue(
       for: AmbeoEndpoint.Player.Mute(),
       timeout: AmbeoClient.interactiveTimeout
@@ -840,7 +872,7 @@ struct AppSettings: Codable {
   /// Replays the Atmos Boost volume write that `setBoostVolume` deferred while the soundbar was
   /// muted. The target is recomputed from the current state, so a mute spanning an Atmos
   /// transition ends up with the correct direction (apply while Atmos, revert in stereo).
-  private func replayDeferredAtmosVolumeWork(afterUnmute reason: String) {
+  func replayDeferredAtmosVolumeWork(afterUnmute reason: String) {
     guard let action = deferredBoostReasonWhileMuted else { return }
     deferredBoostReasonWhileMuted = nil
     guard !isShuttingDown, settings.atmosBoostAmount > 0 else { return }
