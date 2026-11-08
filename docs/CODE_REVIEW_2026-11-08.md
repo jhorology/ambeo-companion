@@ -337,9 +337,33 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 ### 10. TCC 権限の2秒ポーリングが常時運転
 
-**優先度：中／未対応**
+**優先度：中／対応済み（2026-11-08・実機確認は未実施）**
 
-AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに `AXIsProcessTrusted()` ＋ `AEDeterminePermissionToAutomateTarget()`（→ `NSRunningApplication` 列挙）を呼び続ける。取り消し検知は [SystemEventMonitor.swift](../Sources/AmbeoCore/Utilities/SystemEventMonitor.swift) の tap-disabled callback とスレッド内チェック（188行目）で既にカバー済み。**Permissions 窓が開いている間だけ**回すだけで十分。
+`monitoringPermissionsTask` が2秒ごとに `AXIsProcessTrusted()` ＋ `AEDeterminePermissionToAutomateTarget()`（→ `NSRunningApplication` 列挙）を呼び続けていた。取り消し検知は [SystemEventMonitor.swift](../Sources/AmbeoCore/Utilities/SystemEventMonitor.swift) の tap-disabled callback とスレッド内チェック（188行目）で既にカバー済みだった。
+
+#### 対応内容（常時監視をやめ、起動時＋イベント駆動に）
+
+2秒ループ・`monitoringPermissionsTask` プロパティ・終了時の cancel を削除し、次で置き換えた:
+
+| きっかけ | 位置 | 何を検知する |
+| --- | --- | --- |
+| **起動時に1回** | AppModel.swift init | 起動時点の許可状態（Permissions 窓の初期表示に必要） |
+| **アプリがアクティブになったとき** (`NSApplication.didBecomeActiveNotification`) | setupNotifications | System Settings から戻った＝**許可した直後**の主ケース |
+| **メディアキー監視のストリーム終了時** | startMonitoringSystemEvent のループ後 | **Accessibility 取り消し**。tap スレッドは `AXIsProcessTrusted()` を 0.25秒ごとに確認し、抜けたら停止 → `defer { continuation.finish() }` でストリームが終わる → ここで権限を更新 |
+| スリープ復帰時 | 既存（変更なし） | 復帰後の状態 |
+
+**Automation（Music.app）の取り消し**はポーリングに依存していなかった: `MusicPlayerController` が使用のたびに `permissionStatus(askUserIfNeeded: false)` を見ている（106 / 108 / 223 / 261 / 264行目）。よって常時ポーリング削除で検知は落ちない。
+
+取り消し→許可の往復で監視タスクが暴走しない: `refreshMediaKeyPermissions()` は状態が変わったときだけ `restartSystemEventMonitorIfNeeded()` を呼ぶ（`current != mediaKeyPermissions` で early return）。キャンセル由来のストリーム終了（設定でメディアキーを切った等）は `guard !Task.isCancelled` で無視する。
+
+#### 検証と実機確認
+
+`swift build -c release` 警告ゼロ、`swift test` 全パス（XCTest 15件・2スキップ／swift-testing 24件）、`swift-format lint` クリーン。**AppModel にテストターゲットは無く単体テストは追加できない**。
+
+実機での確認手順:
+
+1. システム設定で Accessibility を**外す** → メディアキーが効かなくなり、ログに `Media key stream ended; refreshing permission state.` が出て Permissions 表示が外れた状態になる（0.25秒検出＋更新。既存の2秒待ちより速い）
+2. 再度チェックを**許可してアプリに戻ると**（＝アプリがアクティブになる）「再チェック」を押さずに表示が更新される
 
 ### 11. mDNS 応答の信頼性チェックが無い
 
@@ -439,6 +463,7 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 4. ✅ `Stringified` の数値対応＋`Edit` の部分キー耐性（🟡5）
 5. ✅ reconcile の自己取消回避（🟡9）
 6. ✅ `URLSession` の invalidate（🟡7）＋検出ディスパッチキューの共有（🟡8 アプリ側）
+7. ✅ TCC 権限の常時ポーリング削除 → 起動時＋イベント駆動（🟡10）
 
 **WON'T FIX（実機仕様・本機実測による）**
 
@@ -448,7 +473,6 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 
 **未対応**
 
-7. TCC ポーリング縮小（🟡10）
 8. mDNS 応答の妥当性検証（🟡11）
 9. `AppModel` 分割でテスト可能域を広げる（🟡12）
 10. CI ＋ `Package.resolved` ＋ Tests 整形（🟢）
@@ -467,6 +491,7 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 | 2026-11-08 | 🟡6 電源断をまたいだ台帳リセット | **WON'T FIX**（AMBEO は音量を保持するため不整合が起きない。台帳リセットは二重 Boost＝爆音になる。不変条件を明記） |
 | 2026-11-08 | 🟡13 終了処理の上限時間 / 🟡14 ミュート系の per-request timeout | 対応済み（Quit 猶予 2.5秒、ミュート系書き込みは 2秒上限。新規テスト1件。実機での Quit 体感は未確認） |
 | 2026-11-08 | 🟡9 reconcile の自己取消 | 対応済み（didSet でストリームを再生成しない。単体テスト無し・実機確認は未実施） |
+| 2026-11-08 | 🟡10 TCC 権限ポーリング | 対応済み（常時2秒ポーリングを削除し、起動時＋アプリがアクティブになった時＋メディアキー監視のストリーム終了時＋スリープ復帰時に。実機確認は未実施） |
 | 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューを共有化して**対応済み**。機器側購読キューは **WON'T FIX**（組込 Web UI がリロードごとにキューを作り unsubscribe しないが動作する → セッション単位で firmware が回収する推定。明示解放は入れない） |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
 
@@ -516,4 +541,8 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 - `Sources/AmbeoCore/Network/SennheiserDiscovery.swift` — `browse()` ごとに新設していた DispatchQueue を共有 static に
 - `Tests/AmbeoCoreTests/AmbeoClientShutdownTests.swift` — 新規（2テスト）。`AmbeoClientTimeoutTests` のハングスタブを共有
 
-次の対応推奨は 🟡10（TCC 権限ポーリングの縮小）。🔴4・🟡6・🟡8 の機器側キューは WON'T FIX（上記）。
+### 🟡10 の変更ファイル
+
+- `Sources/AmbeoCompanion/App/AppModel.swift` — 2秒ポーリング（`monitoringPermissionsTask`）を削除。起動時1回／`didBecomeActiveNotification`／メディアキー監視のストリーム終了時に更新し、スリープ復帰時の既存更新はそのまま
+
+次の対応推奨は 🟡11（mDNS 応答の妥当性検証）。🔴4・🟡6・🟡8 の機器側キューは WON'T FIX（上記）。

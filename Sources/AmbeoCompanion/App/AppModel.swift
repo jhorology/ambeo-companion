@@ -54,7 +54,6 @@ struct AppSettings: Codable {
   /// Device and output stream that `monitoringFormatTask` observes.
   private var monitoredFormatSource: (device: AudioDeviceID, stream: AudioStreamID)?
   private var monitoringSystemEventTask: Task<Void, Never>?
-  private var monitoringPermissionsTask: Task<Void, Never>?
   private(set) var mediaKeyPermissions = MediaKeyPermissions.current()
   private var stealthRewindCoordinator: StealthRewindCoordinator?
 
@@ -213,13 +212,13 @@ struct AppSettings: Codable {
     startDiscoveringAmbeo()
     startMonitoringAudioDevice()
     if settings.mediaKeyEnabled { startMonitoringSystemEvent() }
-    monitoringPermissionsTask = Task { [weak self] in
-      while !Task.isCancelled {
-        do { try await Task.sleep(for: .seconds(2)) } catch { return }
-        guard let self, !self.isShuttingDown else { return }
-        await self.refreshMediaKeyPermissions()
-      }
-    }
+    // Permission state is checked at launch and then on events, not on a timer:
+    // - the app becomes active (the user comes back from System Settings)
+    // - the media-key monitor ends its stream, which is how Accessibility revocation surfaces
+    // - wake from sleep
+    // SystemEventMonitor already checks AXIsProcessTrusted() on its own thread, so a 2 s TCC poll
+    // only added queries without noticing anything earlier.
+    Task { [weak self] in await self?.refreshMediaKeyPermissions() }
     setupNotifications()
     setupKeyboardShortcuts()
   }
@@ -577,6 +576,11 @@ struct AppSettings: Codable {
         Logger.lifecycle.debug("Intercepted media key: \(String(describing: key))")
         await self.handleMediaKey(key)
       }
+      // The stream ends when Accessibility is revoked (SystemEventMonitor polls AXIsProcessTrusted
+      // on its own thread), so this is the event-driven permission check.
+      guard !Task.isCancelled, !self.isShuttingDown else { return }
+      Logger.lifecycle.info("Media key stream ended; refreshing permission state.")
+      await self.refreshMediaKeyPermissions()
     }
   }
 
@@ -942,7 +946,6 @@ struct AppSettings: Codable {
 
   func prepareForTermination() async {
     isShuttingDown = true
-    monitoringPermissionsTask?.cancel()
     saveTask?.cancel()
     saveSettings()
     discoveringAmbeoTask?.cancel()
@@ -1046,6 +1049,16 @@ struct AppSettings: Codable {
         self.saveTask?.cancel()
         self.saveSettings()
       }
+    }
+
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      // Replacing the permission poll: this is when the user returns from System Settings after
+      // granting Accessibility / Automation.
+      Task { @MainActor [weak self] in await self?.refreshMediaKeyPermissions() }
     }
 
     NotificationCenter.default.addObserver(
