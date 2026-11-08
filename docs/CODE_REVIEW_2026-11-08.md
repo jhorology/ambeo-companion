@@ -12,7 +12,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `swift build -c debug` | 警告ゼロで成功 |
-| `swift test` | XCTest 15件（うち2件スキップ）＋ swift-testing 22件、すべて成功 |
+| `swift test` | XCTest 15件（うち2件スキップ）＋ swift-testing 24件、すべて成功 |
 | CoreAudio 出力ストリーム実測（本機・6デバイス） | **全デバイスで out streams = 1**（🔴4 の評価に使用。表は同項参照） |
 | `swift-format lint -r -p`（`Tests` を含めて実行） | `Tests/` の複数ファイルで `[RemoveLine]` 警告。**ただし `swift-format format -i` は差分ゼロ**（後述 🟢 で原因を解析） |
 
@@ -262,21 +262,78 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 ### 7. `URLSession` を一度も invalidate しない
 
-**優先度：中／未対応**
+**優先度：中／対応済み（2026-11-08）**
 
-[AmbeoClient.swift](../Sources/AmbeoCore/Network/AmbeoClient.swift) 41行目で生成、`stopObserving()`（31行目）は poll task を止めるだけで `session.finishTasksAndInvalidate()` を呼ばない。ログ上、1起動で28回再接続（`Subscribed queue` の出現数）。Wake / IP 変更のたびにセッションとコネクションプールが残る。
+[AmbeoClient.swift](../Sources/AmbeoCore/Network/AmbeoClient.swift) で生成する `URLSession` を、生成したクライアントの寿命が終わっても invalidate していなかった。`stopObserving()` は poll task を止めるだけで、ログ上 1起動で28回の再接続（`Subscribed queue` の出現数）があり、Wake / IP 変更のたびにセッションとコネクションプールが残っていた。
+
+#### 対応内容
+
+- **`AmbeoClient.shutdown()` を追加**（`stopObserving()` ＋ `session.finishTasksAndInvalidate()` ＋ `isShutDown` フラグ）。`stopObserving()` は「クライアントを使い続ける」呼び出し側のために据え置き、寿命が終わる場所だけで `shutdown()` を呼ぶ
+- **`shutdown()` を呼ぶ箇所**（＝クライアントを破棄する4経路）:
+
+| 経路 | 位置 | 注意点 |
+| --- | --- | --- |
+| 再接続で旧クライアント | AppModel.swift 296行目 | 旧セッション上の `revertOutstandingBoost`（HTTP）を**終えた後**に無効化。早期 return しても無効化が飛ぶようにガードを統合した |
+| 生成中に世代が古くなった新規クライアント | 323 / 332行目 | `self.ambeoClient === client` のとき先に nil へしてから shutdown（生存中のセッションを殺さない） |
+| スリープ時 | 1032行目 | 復帰時は新しいクライアントを作るので旧クライアントは破棄 |
+| 終了時 | 961行目 | Boost 戻しの後 |
+
+- **使用済みクライアントの後片付け**: `set` は `URLError(.cancelled)`、`fetchDirectValue` は nil、`startObserving()` は再武装しない（無効化したセッションへリクエストを流さない）
+- テスト2件（`AmbeoClientShutdownTests`）: 停止後に書き込みが `.cancelled` で即失敗すること／読み取りが nil であること、`shutdown()` の冪等性
+
+#### 残る確認
+
+実機で長時間（スリープ／Wake を繰り返す）運用し、セッション数が増え続けないことを確認する。ログの `AmbeoClient session invalidated for ...` が再接続回数と一致するはず。
 
 ### 8. 機器側イベントキューを毎回新規作成し、捨てている
 
-**優先度：中／未対応**
+**優先度：中／部分対応（2026-11-08・アプリ側のみ）**
 
-`setupAmbeoSubscription()`（AmbeoClient.swift 254行目〜）は `queueId=""` で毎回新しいキューを作り、旧キューを unsubscribe/破棄しない。組み込み機のキュー枠は有限で、Wake を繰り返す運用では実機側に古い購読キューが溜まる。アプリ側も `browse()` ごとに `DispatchQueue(label: "io.github.jhorology.SennheiserDiscovery")` を新設（SennheiserDiscovery.swift 49行目）。
+`setupAmbeoSubscription()` は `queueId=""` で毎回新しい機器側キューを作り、旧キューを解放しない。組み込み機のキュー枠は有限で、Wake を繰り返す運用では実機側に古い購読キューが溜まる可能性がある。
+
+#### 対応内容（アプリ側）
+
+- `SennheiserDiscovery.browse()` は呼び出しごとに `DispatchQueue(label: "io.github.jhorology.SennheiserDiscovery")` を新設していた（本機ログで **1起動あたり NWBrowser 30回**）。**共有の static シリアルキュー**に変更。NWBrowser はキュー共有を公式にサポートしており、結果は小さいので直列化の影響は無い
+
+#### 機器側キューは意図的に触っていない
+
+`/api/event/modifyQueue` の**解放セマンティクスが実機で未検証**のため。空 `subscribe` / `unsubscribe` の意味が分からずに呼ぶと、購読が黙って死ぬリスクがある。前レビュー [CODE_REVIEW.md](CODE_REVIEW.md) 583行目も「未検証の API 呼び出しは入れない」と明記しており、同じ判断を守った。
+
+実機で確定させる実験:
+
+1. サウンドバーの電源を入れ直さずに Wake／再接続を 20 回ほど繰り返す
+2. `pollQueue` が古い `queueId` をいつまで受け付けるか、購読 push が止まる瞬間があるかをログで確認
+3. 解放 API（`modifyQueue` の `unsubscribe` 配列、専用の delete 系エンドポイント等）を DevTools／実機観測で特定できたら、`shutdown()` 内で旧キューを unsubscribe する（`currentQueueId` を保持しておく）
 
 ### 9. `reconcileAudioDeviceSelection` が自分自身のタスクをキャンセルする
 
-**優先度：中／未対応**
+**優先度：中／対応済み（2026-11-08・実機確認は未実施）**
 
-AppModel.swift 381〜388行目（`startMonitoringAudioDevice` は379行目）のループ内で `settings.audioDeviceUid = device.uid`（412行目）すると、didSet → `startMonitoringAudioDevice()`（379行目）→ **実行中の `monitoringOutputDevicesTask` を cancel** して再生成する。以降の `updateFormatMonitoringForActiveDevice()` は `Task.isCancelled == true` の状態で走る。UID 復旧が走るたびにストリームが総入れ替えされ、Stealth Rewind の `resetObservedFormat()` も連続発火する。次イテレーションへ逃がす設計が安全。
+`reconcileAudioDeviceSelection()` のループ内で `settings.audioDeviceUid = device.uid` すると、didSet → `startMonitoringAudioDevice()` → **実行中の `monitoringOutputDevicesTask` を cancel** して再生成していた。以降の `updateFormatMonitoringForActiveDevice()` は `Task.isCancelled == true` の状態で走り、UID 復旧のたびにストリームが総入れ替えされ、Stealth Rewind の `resetObservedFormat()` も連続発火していた。
+
+#### 対応内容（当初案ではなく didSet 側を修正）
+
+当初の推奨は「書き込みを次イテレーションへ逃がす」だったが、実装は **根本の didSet 側**を直した。`settings.audioDeviceUid` 変更時に `startMonitoringAudioDevice()` を呼ばず、次で置き換えた:
+
+- `updateFormatMonitoringForActiveDevice()` — UID はその場で解決される（`AudioDeviceMonitor.audioDevice(withUid:)`）。`startMonitoringFormat` は監視 source が不変なら early-return する冪等関数
+- 既定出力デバイスが新 UID と一致するときだけ `applyFallbackFormatIfNeeded(for:)` — 旧コードの「再生成直後に `defaultDeviceStream` が現値を yield して発火する」経路を明示的に再現
+- `restartSystemEventMonitorIfNeeded()` は**維持**（メディアキー監視は起動時に UID を捕捉するため、UID 変更で再スタートが必要）
+
+再購読しなくなった理由: `outputDevicesStream` / `defaultDeviceStream` は**全デバイス**を観察しており、選択 UID の変化で購読し直す必要がない。
+
+#### 効果
+
+| 旧 | 新 |
+| --- | --- |
+| キャンセル済みタスク内で `updateFormatMonitoringForActiveDevice()` が走る | 走らない（呼び出しは存活中のタスク／didSet から） |
+| UID 復旧ごとに CoreAudio サブスクリプションを総入れ替え。`defaultDeviceStream` は購読時に現値を yield するため、復旧のたびに `Default audio device changed:` が即発火 | 再購読なし。ログも増えない |
+| `resetObservedFormat()` が連続発火（取り消し＋再生成で2回） | 1回 |
+
+#### 検証
+
+`swift build -c release` 警告ゼロ、`swift test` 全パス（XCTest 15件・2スキップ／swift-testing 22件）、`swift-format lint` クリーン。
+
+**AppModel にテストターゲットが無く単体テストは追加できない**（🟡12 で分離すべき対象）。実機での確認シグナル: ログに `Recovered display output UID: ...` が出た**直後**に `Default audio device changed:` が続いて出なければ修正が効いている（旧コードでは再生成時の初期 yield で必ず続いた）。
 
 ### 10. TCC 権限の2秒ポーリングが常時運転
 
@@ -374,15 +431,29 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 
 ## 対応順の提案
 
-1. ✅ `NSLocalNetworkUsageDescription` / `NSBonjourServices` 追加（🔴1）— 2026-11-08 対応済み
-2. ✅ Stealth Rewind のタイムアウト武装タイミング（🔴2）— 2026-11-08 対応済み
-3. ✅ ミュート中 Boost スキップ（🔴3）— 2026-11-08 対応済み（実機確認は未実施）
-4. ✅ `Stringified` の数値対応（🟡5）— 2026-11-08 対応済み
-5. ✅ 電源断での台帳リセット（🟡6）— **WON'T FIX**（ハードが音量を保持するため前提が誤り。リセットは二重 Boost＝爆音）
-6. `finishTasksAndInvalidate` / キュー整理（🟡7, 8）、reconcile の自己取消回避（🟡9）
-7. ✅ 終了 deadline（🟡13）＋ミュート系の per-request timeout（🟡14）— 2026-11-08 対応済み（実機での Quit 体感は未確認）
+**対応済み（2026-11-08）**
+
+1. ✅ `NSLocalNetworkUsageDescription` / `NSBonjourServices` 追加（🔴1）
+2. ✅ Stealth Rewind のタイムアウト武装タイミング（🔴2）
+3. ✅ ミュート中 Boost スキップ（🔴3）
+4. ✅ `Stringified` の数値対応＋`Edit` の部分キー耐性（🟡5）
+5. ✅ reconcile の自己取消回避（🟡9）
+6. ✅ `URLSession` の invalidate（🟡7）＋検出ディスパッチキューの共有（🟡8 アプリ側）
+
+**WON'T FIX（実機仕様・本機実測による）**
+
+- 🔴4 出力ストリーム選択の一般化
+- 🟡6 電源断をまたいだ台帳リセット（リセットは二重 Boost＝爆音）
+
+**未対応**
+
+7. 機器側購読キューの解放（🟡8 の残り・実機で API を確定させてから）
 8. TCC ポーリング縮小（🟡10）
-9. CI ＋ `Package.resolved` ＋ Tests 整形（🟢）
+9. mDNS 応答の妥当性検証（🟡11）
+10. `AppModel` 分割でテスト可能域を広げる（🟡12）
+11. CI ＋ `Package.resolved` ＋ Tests 整形（🟢）
+
+※ 終了 deadline（🟡13）＋ミュート系の per-request timeout（🟡14）も 2026-11-08 に対応済み。
 
 ## 対応記録
 
@@ -395,6 +466,8 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 | 2026-11-08 | 🟡5 `Stringified` の数値対応 | 対応済み（部分 edit キーの必須化も修正。新規8テストで回帰防止） |
 | 2026-11-08 | 🟡6 電源断をまたいだ台帳リセット | **WON'T FIX**（AMBEO は音量を保持するため不整合が起きない。台帳リセットは二重 Boost＝爆音になる。不変条件を明記） |
 | 2026-11-08 | 🟡13 終了処理の上限時間 / 🟡14 ミュート系の per-request timeout | 対応済み（Quit 猶予 2.5秒、ミュート系書き込みは 2秒上限。新規テスト1件。実機での Quit 体感は未確認） |
+| 2026-11-08 | 🟡9 reconcile の自己取消 | 対応済み（didSet でストリームを再生成しない。単体テスト無し・実機確認は未実施） |
+| 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューのみ対応、**機器側購読キューは解放 API が実機未検証のため未対応** |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
 
 ### 2026-11-08 の変更ファイル
@@ -432,4 +505,15 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 - `Tests/AmbeoCoreTests/AmbeoClientTimeoutTests.swift` — 新規（ハング応答で per-request timeout が効くことを確認）
 - `README.md` / `README.ja.md` — Mute / Mute 解除要求の 2秒上限を明記
 
-次の対応推奨は 🟡9（`reconcileAudioDeviceSelection` の自己取消）。🔴4 と 🟡6 は実機仕様により WON'T FIX（上記）。
+### 🟡9 の変更ファイル
+
+- `Sources/AmbeoCompanion/App/AppModel.swift` — `settings.audioDeviceUid` の didSet で `startMonitoringAudioDevice()` を呼ばなくなり、`updateFormatMonitoringForActiveDevice()` ＋条件付き `applyFallbackFormatIfNeeded` ＋ `restartSystemEventMonitorIfNeeded()` に置換（8行追加）
+
+### 🟡7・🟡8 の変更ファイル
+
+- `Sources/AmbeoCore/Network/AmbeoClient.swift` — `shutdown()`（`finishTasksAndInvalidate` ＋ `isShutDown`）、`set` / `fetchDirectValue` / `startObserving` の使用済みクライアント保護
+- `Sources/AmbeoCompanion/App/AppModel.swift` — クライアントを破棄する4経路（再接続・世代古化・スリープ・終了）で `shutdown()` を呼ぶように変更
+- `Sources/AmbeoCore/Network/SennheiserDiscovery.swift` — `browse()` ごとに新設していた DispatchQueue を共有 static に
+- `Tests/AmbeoCoreTests/AmbeoClientShutdownTests.swift` — 新規（2テスト）。`AmbeoClientTimeoutTests` のハングスタブを共有
+
+次の対応推奨は 🟡10（TCC 権限ポーリングの縮小）。🔴4 と 🟡6 は実機仕様により WON'T FIX（上記）。

@@ -4,7 +4,8 @@ import Testing
 @testable import AmbeoCore
 
 /// Answers nothing for 5 s, so a caller's per-request timeout is the only thing that ends the call.
-private final class HangingProtocol: URLProtocol, @unchecked Sendable {
+/// Shared with `AmbeoClientShutdownTests` (same test module).
+final class HangingProtocol: URLProtocol, @unchecked Sendable {
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 

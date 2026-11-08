@@ -94,7 +94,14 @@ struct AppSettings: Codable {
       debouncedSaveSettings()
       if settings.ambeoUid != oldValue.ambeoUid { reconnectAmbeoClient() }
       if settings.audioDeviceUid != oldValue.audioDeviceUid {
-        startMonitoringAudioDevice()
+        // Both streams observe every output device, so a UID change needs no resubscription.
+        // Restarting them here cancelled the stream task that was mid-iteration inside
+        // reconcileAudioDeviceSelection(), leaving updateFormatMonitoringForActiveDevice() running
+        // in a cancelled task and churning CoreAudio subscriptions on every UID recovery.
+        updateFormatMonitoringForActiveDevice()
+        if let current = currentAudioDevice, current.uid == settings.audioDeviceUid {
+          applyFallbackFormatIfNeeded(for: current)
+        }
         restartSystemEventMonitorIfNeeded()
       }
       if settings.mediaKeyEnabled != oldValue.mediaKeyEnabled {
@@ -279,10 +286,14 @@ struct AppSettings: Codable {
       await previousClient?.stopObserving()
       await previousTransition?.value
       if self.disconnectingClient === previousClient { self.disconnectingClient = nil }
-      guard !Task.isCancelled, generation == self.clientGeneration else { return }
-      if uid != self.connectedUid, let previousClient {
+      if !Task.isCancelled, generation == self.clientGeneration, uid != self.connectedUid,
+        let previousClient
+      {
         await self.revertOutstandingBoost(using: previousClient)
       }
+      // The previous connection is finished with (its boost state was reconciled above), so release
+      // its session. Without this, every reconnect leaves a URLSession and connection pool behind.
+      await previousClient?.shutdown()
       guard !Task.isCancelled, generation == self.clientGeneration else { return }
       guard !uid.isEmpty, let host else { return }
 
@@ -308,7 +319,8 @@ struct AppSettings: Codable {
       }
 
       guard !Task.isCancelled, generation == self.clientGeneration else {
-        await client.stopObserving()
+        if self.ambeoClient === client { self.ambeoClient = nil }
+        await client.shutdown()
         return
       }
 
@@ -316,7 +328,8 @@ struct AppSettings: Codable {
       await client.markInitialSyncCompleted()
 
       guard !Task.isCancelled, generation == self.clientGeneration else {
-        await client.stopObserving()
+        if self.ambeoClient === client { self.ambeoClient = nil }
+        await client.shutdown()
         return
       }
 
@@ -945,7 +958,7 @@ struct AppSettings: Codable {
     await atmosTransitionTask?.value
     if let client = ambeoClient {
       await revertOutstandingBoost(using: client)
-      await client.stopObserving()
+      await client.shutdown()
     }
   }
 
@@ -1015,7 +1028,8 @@ struct AppSettings: Codable {
         let client = self.ambeoClient
         self.ambeoClient = nil
         self.clientGeneration += 1
-        await client?.stopObserving()
+        // Wake rebuilds the client, so this one is dropped: invalidate its session too.
+        await client?.shutdown()
 
         Logger.lifecycle.info("Will sleep")
       }

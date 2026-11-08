@@ -33,11 +33,25 @@ public actor AmbeoClient {
 
   private var isObserving = false
   private var pollTask: Task<Void, Never>?
+  private var isShutDown = false
 
   public func stopObserving() {
     isObserving = false
     pollTask?.cancel()
     pollTask = nil
+  }
+
+  /// Stops observing **and releases the session's resources**. A client that has been shut down is
+  /// finished with: requests fail fast instead of reaching the network, and it must not be reused.
+  /// Callers use this when they drop a client (reconnect, sleep, termination); `stopObserving()`
+  /// alone stays available for callers that intend to keep the client alive.
+  public func shutdown() {
+    stopObserving()
+    guard !isShutDown else { return }
+    isShutDown = true
+    // Without this, every reconnect leaves a URLSession and its connection pool behind.
+    session.finishTasksAndInvalidate()
+    Logger.network.info("AmbeoClient session invalidated for \(host).")
   }
 
   public init(host: String, configuration: URLSessionConfiguration = .default) {
@@ -140,6 +154,7 @@ public actor AmbeoClient {
     for endpoint: E,
     timeout: TimeInterval? = nil
   ) async -> E.Payload? {
+    guard !isShutDown else { return nil }
     var components = URLComponents()
     components.scheme = "http"
     components.host = host
@@ -196,7 +211,8 @@ public actor AmbeoClient {
   // MARK: - Polling Loop
 
   public func startObserving() async {
-    guard !isObserving, !registeredPaths.isEmpty else { return }
+    // A shut-down client must never re-arm: its session is invalidated.
+    guard !isShutDown, !isObserving, !registeredPaths.isEmpty else { return }
     isObserving = true
 
     pollTask?.cancel()
@@ -205,7 +221,7 @@ public actor AmbeoClient {
         "AMBEO event observation loop started for \(self.registeredPaths.count) paths."
       )
       var retryDelaySeconds: UInt64 = 3
-      while isObserving {
+      while isObserving, !self.isShutDown {
         guard let qId = await setupAmbeoSubscription() else {
           Logger.network.warning("Subscription failed. Retrying in \(retryDelaySeconds)s...")
           try? await Task.sleep(nanoseconds: retryDelaySeconds * 1_000_000_000)
@@ -385,6 +401,7 @@ public actor AmbeoClient {
     role: String = "value",
     timeout: TimeInterval? = nil
   ) async throws {
+    guard !isShutDown else { throw URLError(.cancelled) }
     var components = URLComponents()
     components.scheme = "http"
     components.host = host

@@ -21,6 +21,10 @@ public struct SennheiserNetworkDevice: Sendable, Identifiable, Hashable, Codable
 }
 
 public enum SennheiserDiscovery {
+  /// One serial queue is shared by every browse session. NWBrowser documents queue sharing as
+  /// supported, and creating a fresh serial queue per `browse()` only churns the pool (the app
+  /// starts dozens of browse sessions per run).
+  private static let callbackQueue = DispatchQueue(label: "io.github.jhorology.SennheiserDiscovery")
 
   public static func browse() -> AsyncStream<[SennheiserNetworkDevice]> {
     AsyncStream { continuation in
@@ -46,8 +50,7 @@ public enum SennheiserDiscovery {
         Logger.network.info("NWBrowser session cancelled.")
       }
 
-      let queue = DispatchQueue(label: "io.github.jhorology.SennheiserDiscovery")
-      browser.start(queue: queue)
+      browser.start(queue: Self.callbackQueue)
       Logger.network.info("NWBrowser started.")
     }
   }
