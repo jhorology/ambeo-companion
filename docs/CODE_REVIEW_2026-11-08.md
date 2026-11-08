@@ -122,6 +122,25 @@ tccutil reset LocalNetwork "$BUNDLE_ID" || echo "Warning: Failed to reset Local 
 
 **教訓**: `NSBonjourServices` の追加は「プロンプトが出て終わり」ではなく、**許可されていない場合に UI が何も語らなくなる**変更だった。検出系は失敗が無言になりやすい（`NWBrowser` に結果が無いだけ）ので、状態ハンドラのログとユーザー向け誘導が必須。
 
+#### 実機検証（2026-11-09・完了）
+
+Local Network を許可したうえで、ログを見ながら一通り動作確認した。**異常なし**。
+
+| 確認 | ログ上の証拠 |
+| --- | --- |
+| 権限ゲート | 許可後に `PolicyDenied` は**ゼロ**（許可前は起動ごとに 1 件）。検出・接続が復帰し、メニューの操作項目も復活 |
+| 🔴2 タイムアウト武装 | Stealth Rewind が `[1/6]`〜`[6/6]` まで完走。Mute RPC **64.7ms**、AMBEO 入力切替 **+2206.7ms**、Rewind 成功 **+2235.6ms**、Unmute **+2501.5ms**。遷移開始時に武装した 5 秒の安全タイマは発火せず（正常系で発火しないことを実機で確認） |
+| 🔴3 / 🟡6 台帳 | `Atmos Boost applied: 25 → 50 (+25%)` → `Atmos Boost reverted: 50 → 25 (-25%)`。適用と解除が対で、台帳が機器の実音量に沿って更新されている |
+| 全般 | 権限リセット後の検出、CoreAudio フォーマット追跡（`cc+3` = Dolby Digital Plus - Dolby Atmos, 12ch）、Music.app 連携にエラーなし |
+
+**未実施の専用シナリオ**（通常利用のログには現れないため、意図的に作る必要がある）:
+
+- 🔴3「ミュート中に Atmos へ切り替えて音が出ず、ミュート解除時に適用」＝`Atmos Boost apply skipped: soundbar is muted` を能動的に確認
+- 🟡13 機器が応答しない状態での Quit（2.5秒で抜けるか）／🟡14 ミュート系の 2 秒上限
+- 🟡9 `Recovered display output UID:` の直後に `Default audio device changed:` が続かないこと
+- 🟡7 `AmbeoClient session invalidated for ...` の回数が再接続数と一致すること
+- 🟡10 Accessibility 取り消し時の検出（約0.25秒）と Permissions 表示の更新
+
 ---
 
 ### 2. Stealth Rewind の安全タイムアウトが「ミュート RPC 完了後」に始まる
@@ -593,6 +612,7 @@ AppModel は 1296 行のまま（今回の対応で増加）。分割そのも�
 | 2026-11-08 | 🟡10 TCC 権限ポーリング | 対応済み（常時2秒ポーリングを削除し、起動時＋アプリがアクティブになった時＋メディアキー監視のストリーム終了時＋スリープ復帰時に。実機確認は未実施） |
 | 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューを共有化して**対応済み**。機器側購読キューは **WON'T FIX**（組込 Web UI がリロードごとにキューを作り unsubscribe しないが動作する → セッション単位で firmware が回収する推定。明示解放は入れない） |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
+| 2026-11-09 | 実機検証（Local Network 許可後） | **問題なし**。`PolicyDenied` ゼロ、Stealth Rewind `[1/6]`〜`[6/6]` 完走（安全タイマ未発火）、Boost 適用/解除 25↔50 が対で一致。専用シナリオ要の項目（🔴3 / 🟡7 / 🟡9 / 🟡10 / 🟡13）は未実施 |
 | 2026-11-09 | 🔴1 の追加対応（観測可能な推定・自動誘導） | 対応済み。`swift run` は無 Info.plist でゲートされず、`.app` のみ `-65570: PolicyDenied`。経過時間は Observable で無いという前コミットの欠陥を修正（grace tick＋`localNetworkStatus`）。Permissions 窓の自動表示、install.sh がペインを開く、テスト4件 |
 | 2026-11-09 | 🔴1 の実機副作用（メニュー項目消失） | 原因確定＋対応済み。mDNSResponder が `Local network access to bonjour ... 'denied' for (io.github.jhorology.AmbeoCompanion)`。機器は健全（dns-sd / curl で確認）。browser 状態ログ追加・メニューに "Open Local Network Settings…"・install.sh 注意書き・ラベル更新 |
 | 2026-11-08 | リリース | **`0.1.28` / build `28`**。🟡11（mDNS 検証）・🟡12 完了（アプリ本体のライブラリ化＋テスト）・🟢（CI／整形）を含む。`SettingsView` のフォールバック文字列も `0.1.28` に更新済み |
@@ -674,4 +694,4 @@ AppModel は 1296 行のまま（今回の対応で増加）。分割そのも�
 
 ### 残りは実機検証のみ
 
-コード側の指摘は全て対応済みか WON'T FIX（v0.1.28）。残るは実機での確認のみ: 🔴1 / 🔴3 / 🟡7 / 🟡9 / 🟡10 / 🟡13。
+コード側の指摘は全て対応済みか WON'T FIX（v0.1.28）。実機検証は 🔴1（権限ゲート）と通常利用のログ確認が完了。残るは意図的にシナリオを作る必要があるものだけ: 🔴3（ミュート中 Atmos） / 🟡7 / 🟡9 / 🟡10 / 🟡13・🟡14。
