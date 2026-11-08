@@ -287,7 +287,7 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 ### 8. 機器側イベントキューを毎回新規作成し、捨てている
 
-**優先度：中／部分対応（2026-11-08・アプリ側のみ）**
+**優先度：中／対応済み（2026-11-08・アプリ側を修正。機器側は WON'T FIX）**
 
 `setupAmbeoSubscription()` は `queueId=""` で毎回新しい機器側キューを作り、旧キューを解放しない。組み込み機のキュー枠は有限で、Wake を繰り返す運用では実機側に古い購読キューが溜まる可能性がある。
 
@@ -295,15 +295,15 @@ Boost 適用中にユーザーがリモコン等で音量を変えると、台�
 
 - `SennheiserDiscovery.browse()` は呼び出しごとに `DispatchQueue(label: "io.github.jhorology.SennheiserDiscovery")` を新設していた（本機ログで **1起動あたり NWBrowser 30回**）。**共有の static シリアルキュー**に変更。NWBrowser はキュー共有を公式にサポートしており、結果は小さいので直列化の影響は無い
 
-#### 機器側キューは意図的に触っていない
+#### 機器側キューは WON'T FIX（機器組込 Web UI で確認済み）
 
-`/api/event/modifyQueue` の**解放セマンティクスが実機で未検証**のため。空 `subscribe` / `unsubscribe` の意味が分からずに呼ぶと、購読が黙って死ぬリスクがある。前レビュー [CODE_REVIEW.md](CODE_REVIEW.md) 583行目も「未検証の API 呼び出しは入れない」と明記しており、同じ判断を守った。
+**根拠（実機観察）**: サウンドバーの組込 Web UI（`http://ambeo.local`）はブラウザでページをリロードするたびに新しい購読キューを作るが、**unsubscribe の手続きは存在しない**。何度リロードしても動作に支障が無い。
 
-実機で確定させる実験:
+→ 機器側は**セッション単位（おそらく TCP 接続単位）でキューを管理し、接続が切れた時点で firmware が回収している**と推定される。本アプリの long-poll も同じ前提で、poll 接続が切れた時点で機器側のキューも失効する。
 
-1. サウンドバーの電源を入れ直さずに Wake／再接続を 20 回ほど繰り返す
-2. `pollQueue` が古い `queueId` をいつまで受け付けるか、購読 push が止まる瞬間があるかをログで確認
-3. 解放 API（`modifyQueue` の `unsubscribe` 配列、専用の delete 系エンドポイント等）を DevTools／実機観測で特定できたら、`shutdown()` 内で旧キューを unsubscribe する（`currentQueueId` を保持しておく）
+したがってアプリ側で明示的に解放しに行かない。公式に公開されていない `modifyQueue` の解放 API を推測で呼ぶのは避ける（前レビュー [CODE_REVIEW.md](CODE_REVIEW.md) 583行目「未検証の API 呼び出しは入れない」）。
+
+**確度は「推定」どまり**（公開 API・文書の裏付けなし）。キュー枠が枯渇する兆候が出たら再調査する。監視すべきシグナルはログの `Subscribed queue` 出現回数と、`pollQueue failed with HTTP 4xx` / `Subscription failed. Retrying...` の頻度。
 
 ### 9. `reconcileAudioDeviceSelection` が自分自身のタスクをキャンセルする
 
@@ -444,14 +444,14 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 
 - 🔴4 出力ストリーム選択の一般化
 - 🟡6 電源断をまたいだ台帳リセット（リセットは二重 Boost＝爆音）
+- 🟡8 の機器側購読キュー（機器組込 Web UI で調査済み、解放しなくても問題なし）
 
 **未対応**
 
-7. 機器側購読キューの解放（🟡8 の残り・実機で API を確定させてから）
-8. TCC ポーリング縮小（🟡10）
-9. mDNS 応答の妥当性検証（🟡11）
-10. `AppModel` 分割でテスト可能域を広げる（🟡12）
-11. CI ＋ `Package.resolved` ＋ Tests 整形（🟢）
+7. TCC ポーリング縮小（🟡10）
+8. mDNS 応答の妥当性検証（🟡11）
+9. `AppModel` 分割でテスト可能域を広げる（🟡12）
+10. CI ＋ `Package.resolved` ＋ Tests 整形（🟢）
 
 ※ 終了 deadline（🟡13）＋ミュート系の per-request timeout（🟡14）も 2026-11-08 に対応済み。
 
@@ -467,7 +467,7 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 | 2026-11-08 | 🟡6 電源断をまたいだ台帳リセット | **WON'T FIX**（AMBEO は音量を保持するため不整合が起きない。台帳リセットは二重 Boost＝爆音になる。不変条件を明記） |
 | 2026-11-08 | 🟡13 終了処理の上限時間 / 🟡14 ミュート系の per-request timeout | 対応済み（Quit 猶予 2.5秒、ミュート系書き込みは 2秒上限。新規テスト1件。実機での Quit 体感は未確認） |
 | 2026-11-08 | 🟡9 reconcile の自己取消 | 対応済み（didSet でストリームを再生成しない。単体テスト無し・実機確認は未実施） |
-| 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューのみ対応、**機器側購読キューは解放 API が実機未検証のため未対応** |
+| 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューを共有化して**対応済み**。機器側購読キューは **WON'T FIX**（組込 Web UI がリロードごとにキューを作り unsubscribe しないが動作する → セッション単位で firmware が回収する推定。明示解放は入れない） |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
 
 ### 2026-11-08 の変更ファイル
@@ -516,4 +516,4 @@ AppModel.swift 201〜207行目（`monitoringPermissionsTask`）が2秒ごとに 
 - `Sources/AmbeoCore/Network/SennheiserDiscovery.swift` — `browse()` ごとに新設していた DispatchQueue を共有 static に
 - `Tests/AmbeoCoreTests/AmbeoClientShutdownTests.swift` — 新規（2テスト）。`AmbeoClientTimeoutTests` のハングスタブを共有
 
-次の対応推奨は 🟡10（TCC 権限ポーリングの縮小）。🔴4 と 🟡6 は実機仕様により WON'T FIX（上記）。
+次の対応推奨は 🟡10（TCC 権限ポーリングの縮小）。🔴4・🟡6・🟡8 の機器側キューは WON'T FIX（上記）。
