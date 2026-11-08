@@ -49,6 +49,13 @@ tccutil reset Accessibility "$BUNDLE_ID" || echo "Warning: Failed to reset Acces
 tccutil reset AppleEvents "$BUNDLE_ID" || echo "Warning: Failed to reset Automation permissions."
 tccutil reset LocalNetwork "$BUNDLE_ID" || echo "Warning: Failed to reset Local Network permissions."
 
+# NSBonjourServices makes macOS enforce the Local Network permission for mDNS browsing and LAN
+# HTTP. The reset above removes any previous grant, so say what the user has to do.
+echo
+echo "NOTE: this app is gated by the Local Network permission (NSBonjourServices)."
+echo "      Enable it in System Settings > Privacy & Security > Local Network, then relaunch."
+echo "      Without it, discovery finds nothing and the menu bar shows no soundbar controls."
+
 echo "==> [4/4] Launch permission onboarding"
 open "$DEST"
 echo

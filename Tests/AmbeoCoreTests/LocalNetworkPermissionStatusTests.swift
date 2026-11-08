@@ -53,7 +53,9 @@ import Testing
   @Test("The UI mapping flags only the warning state") func uiMapping() {
     #expect(LocalNetworkPermissionStatus.allowed.label == "Allowed")
     #expect(LocalNetworkPermissionStatus.probing.label == "Checking…")
-    #expect(LocalNetworkPermissionStatus.nothingFound.label == "No soundbar found")
+    #expect(
+      LocalNetworkPermissionStatus.nothingFound.label == "No soundbar found - check Local Network"
+    )
     #expect(!LocalNetworkPermissionStatus.allowed.isWarning)
     #expect(!LocalNetworkPermissionStatus.probing.isWarning)
     #expect(LocalNetworkPermissionStatus.nothingFound.isWarning)

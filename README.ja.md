@@ -117,7 +117,9 @@ Magic Keyboard や Mac の音量キーを `CGEventTap` で受け取り、イベ�
 
 「デバイスの制御とデータへのアクセス」のリストに無い場合は「+」から `/Applications/AmbeoCompanion.app` を追加し、スイッチをオンにします。「オートメーション」についてはアプリの Permissions 画面で **Allow Access** をクリックして macOS の許可ダイアログを表示させてください。
 
-ローカルネットワーク権限には公開 API が無いため、アプリの Permissions 画面は状態を推定表示します（mDNS がサウンドバーを検出したら Allowed、検出が続かなければ No soundbar found）。サウンドバーが見つからない場合はこの項目を開いて Ambeo Companion を許可してください。`Scripts/install.sh` はこの権限もリセットします。
+ローカルネットワーク権限には公開 API が無いため、アプリの Permissions 画面は状態を推定表示します（mDNS がサウンドバーを検出したら Allowed、検出が続かなければ No soundbar found - check Local Network）。
+
+検出できない状態では、メニューバーからサウンドバー操作項目（Preset / AMBEO Mode / AMBEO Level / Night Mode / Voice Enhancement）が消えます。これらは接続中のサウンドバーが無くと表示されないためで、代わりにメニューへ **Open Local Network Settings...** が出るので、そこから Ambeo Companion を許可してください。`Scripts/install.sh` は再インストールのたびにこの権限もリセットします。
 
 再ビルドのたびにアドホック署名のチェックサムが変わるため、画面上はオンのままでも権限が無効になります。`Scripts/install.sh` が各登録をリセットし、権限オンボーディングを起動します。メディアキーや Stealth Rewind が効かないときは、そのスクリプトを実行するか、各画面で一度オフにしてからオンにし直してください。
 

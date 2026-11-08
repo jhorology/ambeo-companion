@@ -114,6 +114,23 @@ public enum SennheiserDiscovery {
         continuation.yield(devices)
       }
 
+      // Without this, a Local Network denial is silent: the browser just never produces results,
+      // and the app looks like the soundbar vanished. mDNSResponder logs the denial on its side;
+      // this puts the matching symptom in the app log.
+      browser.stateUpdateHandler = { state in
+        switch state {
+        case .setup: break
+        case .ready: Logger.network.info("mDNS browser is ready.")
+        case .waiting(let error):
+          Logger.network.warning(
+            "mDNS browser is waiting: \(error). Local Network permission is the usual cause (System Settings > Privacy & Security > Local Network)."
+          )
+        case .failed(let error): Logger.network.error("mDNS browser failed: \(error).")
+        case .cancelled: break  // onTermination already logged the cancellation
+        @unknown default: Logger.network.info("mDNS browser state changed to \(state).")
+        }
+      }
+
       continuation.onTermination = { @Sendable _ in
         browser.cancel()
         Logger.network.info("NWBrowser session cancelled.")

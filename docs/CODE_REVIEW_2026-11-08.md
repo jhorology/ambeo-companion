@@ -79,7 +79,31 @@ tccutil reset LocalNetwork "$BUNDLE_ID" || echo "Warning: Failed to reset Local 
 | `swift build`（UI 追加後） | 警告ゼロで成功 |
 | `swift-format lint`（変更した3ファイル） | クリーン |
 
-**未検証：実機でのプロンプト表示と検出**。Local Network 権限をまだ許可していない状態での初回起動確認が必要。現在のインストール済みアプリは既に手動許可されている可能性が高く、`install.sh` の `tccutil reset LocalNetwork` を通すと再度許可が必要になる。
+#### 実機で発生した副作用（2026-11-09・ユーザー報告）
+
+**v0.1.28 をインストールした環境で、メニューバーの操作項目（Preset / AMBEO Mode / AMBEO Level / Night Mode / Voice Enhancement）が消えた。** 原因は本項目の追加キーだった。
+
+| 確認 | 結果 |
+| --- | --- |
+| シェルから `dns-sd -B _sennheiser._tcp local.` | 実機 `ambeosoundbarmini-2ccbc823-…` を**発見できる** |
+| `ping 192.168.0.20` / `curl http://192.168.0.20/api/getData?path=player:volume` | 応答あり（音量 13 を返す）＝**機器は健全** |
+| アプリのログ | `NWBrowser started.` の後に結果ゼロ、HTTP は "The Internet connection appears to be offline." を反復 |
+| システムログ（mDNSResponder） | `Local network access to bonjour(<private>) policy 'denied' for (io.github.jhorology.AmbeoCompanion).` |
+
+つまり**機器側ではなく macOS がアプリの局所ネットワークアクセスを拒否**していた。`NSBonjourServices` を宣言した瞬間に、それまで事実上無検査だった mDNS 閲覧と LAN HTTP が権限ゲートの対象になり、`install.sh` の `tccutil reset LocalNetwork` が既存許可を消す。ユーザー側の手当ては **System Settings > Privacy & Security > Local Network > Ambeo Companion を有効化**（または `tccutil reset LocalNetwork io.github.jhorology.AmbeoCompanion` 後に再起動してプロンプトを出し直す）。
+
+メニューが消える仕組み: [AmbeoCompanionApp.swift](../Sources/AmbeoApp/App/AmbeoCompanionApp.swift) の MenuBarExtra は `if let state = appModel.soundbarState` で各 Section を描画する。検出ゼロ → クライアント無し → `soundbarState == nil` → Smart Control / Wake Up / Permissions / Settings / Quit だけになる。さらに **Wake Up Soundbar は `ambeoClient == nil` で無効**なので、この状態ではユーザーが自救できない。
+
+#### 対応（2026-11-09）
+
+| 変更 | 内容 |
+| --- | --- |
+| `SennheiserDiscovery.browse()` | `browser.stateUpdateHandler` を追加。`.waiting(error)` を警告ログにし、**「Local Network 権限が典型原因」と文言に出す**。従来は `.ready` も拒否も無言で、ログに症状が残りませんでした（`.failed` / `.cancelled` も網羅） |
+| MenuBarExtra | 推定状態が `nothingFound` のとき **"Open Local Network Settings…"** ボタンを表示（`Privacy_LocalNetwork` ペインを開く）。既存の `LocalNetworkPermissionStatus` 推定をそのまま利用 |
+| `LocalNetworkPermissionStatus.nothingFound` | ラベルを "No soundbar found - check Local Network" に変更（テストも更新） |
+| `Scripts/install.sh` | Local Network リセットの後に「このアプリは局所ネットワーク権限でゲートされる。許可しないと検出ゼロ・メニューに操作項目なし」と明示表示 |
+
+**教訓**: `NSBonjourServices` の追加は「プロンプトが出て終わり」ではなく、**許可されていない場合に UI が何も語らなくなる**変更だった。検出系は失敗が無言になりやすい（`NWBrowser` に結果が無いだけ）ので、状態ハンドラのログとユーザー向け誘導が必須。
 
 ---
 
@@ -552,6 +576,7 @@ AppModel は 1296 行のまま（今回の対応で増加）。分割そのも�
 | 2026-11-08 | 🟡10 TCC 権限ポーリング | 対応済み（常時2秒ポーリングを削除し、起動時＋アプリがアクティブになった時＋メディアキー監視のストリーム終了時＋スリープ復帰時に。実機確認は未実施） |
 | 2026-11-08 | 🟡7 `URLSession` の invalidate / 🟡8 キュー整理 | 🟡7 対応済み（`shutdown()` 追加・テスト2件）。🟡8 はアプリ側の検出キューを共有化して**対応済み**。機器側購読キューは **WON'T FIX**（組込 Web UI がリロードごとにキューを作り unsubscribe しないが動作する → セッション単位で firmware が回収する推定。明示解放は入れない） |
 | 2026-11-08 | バージョン更新 | `0.1.27` / build `27`（`Info.plist`。`SettingsView.swift` のフォールバック文字列は 🟢 のまま） |
+| 2026-11-09 | 🔴1 の実機副作用（メニュー項目消失） | 原因確定＋対応済み。mDNSResponder が `Local network access to bonjour ... 'denied' for (io.github.jhorology.AmbeoCompanion)`。機器は健全（dns-sd / curl で確認）。browser 状態ログ追加・メニューに "Open Local Network Settings…"・install.sh 注意書き・ラベル更新 |
 | 2026-11-08 | リリース | **`0.1.28` / build `28`**。🟡11（mDNS 検証）・🟡12 完了（アプリ本体のライブラリ化＋テスト）・🟢（CI／整形）を含む。`SettingsView` のフォールバック文字列も `0.1.28` に更新済み |
 
 ### 2026-11-08 の変更ファイル

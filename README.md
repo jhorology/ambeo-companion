@@ -117,7 +117,9 @@ Volume keys from Magic Keyboards or Macs are captured via `CGEventTap`, consumed
 
 If `AmbeoCompanion.app` is not listed under Device Control and Data Access / Accessibility, click `+` to add `/Applications/AmbeoCompanion.app` and toggle the switch on. For Automation, click **Allow Access** in the app's Permissions window to trigger the macOS consent prompt.
 
-Local Network access has no public API, so the app's Permissions window can only infer it: it reports **Allowed** once mDNS discovery returns a soundbar, and **No soundbar found** when the result stays empty. If discovery finds nothing, open that pane and allow Ambeo Companion. `Scripts/install.sh` resets this grant as well.
+Local Network access has no public API, so the app's Permissions window can only infer it: it reports **Allowed** once mDNS discovery returns a soundbar, and **No soundbar found - check Local Network** when the result stays empty.
+
+When that happens the menu bar loses its soundbar controls (Preset, AMBEO Mode / Level, Night Mode, Voice Enhancement) because they need a connected soundbar, and the menu shows **Open Local Network Settings...** - click it and allow Ambeo Companion. `Scripts/install.sh` resets this grant on every reinstall, so expect to re-grant it after installing a new build.
 
 Every time the app is rebuilt, its ad-hoc signature checksum changes, which invalidates existing permissions even if the toggles appear on. Running `Scripts/install.sh` will reset the TCC registrations and launch permission onboarding. If media keys or Stealth Rewind do not work, run the script or toggle the switches off and back on in each pane.
 

@@ -146,6 +146,18 @@ struct AmbeoCompanionApp: App {
           Task { await appModel.wakeUpSoundbar() }
         }.disabled(appModel.ambeoClient == nil)
 
+        // Discovery is silent when macOS blocks local-network access (the browser reports no
+        // results and every LAN request fails as "offline"), so name the cause in the menu.
+        if LocalNetworkPermissionStatus(
+          deviceCount: appModel.networkDevices.count,
+          hasClient: appModel.ambeoClient != nil,
+          startedAt: appModel.discoveryStartedAt
+        ) == .nothingFound {
+          Button("Open Local Network Settings...", systemImage: "exclamationmark.triangle") {
+            MediaKeyPermission.openPrivacyPane(anchor: "Privacy_LocalNetwork")
+          }
+        }
+
         Button("Permissions...", systemImage: "lock.shield") { openPermissionWindow() }
 
         Button("Settings...", systemImage: "gearshape") { openSettingsWindow() }.keyboardShortcut(

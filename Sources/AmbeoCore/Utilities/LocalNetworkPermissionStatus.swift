@@ -28,7 +28,7 @@ public enum LocalNetworkPermissionStatus: Equatable, Sendable {
     switch self {
     case .allowed: return "Allowed"
     case .probing: return "Checking…"
-    case .nothingFound: return "No soundbar found"
+    case .nothingFound: return "No soundbar found - check Local Network"
     }
   }
 
