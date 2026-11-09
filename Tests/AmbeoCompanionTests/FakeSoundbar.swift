@@ -120,6 +120,7 @@ final class FakeSoundbarProtocol: URLProtocol, @unchecked Sendable {
 /// Stands in for the NSPanel-backed overlay so AppModel can run headless in tests.
 @MainActor final class RecordingOverlay: VolumeOverlayPresenting {
   private(set) var presentations = 0
+  var position: OverlayPosition = .center
 
   func show(_ update: (VolumeOverlayState) -> Void) {
     presentations += 1

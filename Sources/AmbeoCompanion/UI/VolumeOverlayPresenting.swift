@@ -4,6 +4,8 @@ import Foundation
 /// AppModel presents the OSD through this protocol so tests can record presentations instead of
 /// opening a real NSPanel. `VolumeOverlayManager` is the production implementation.
 @MainActor protocol VolumeOverlayPresenting: AnyObject {
+  /// Applied on the next `show`.
+  var position: OverlayPosition { get set }
   func show(_ update: (VolumeOverlayState) -> Void)
 }
 

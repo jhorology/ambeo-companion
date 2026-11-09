@@ -58,6 +58,11 @@ import Observation
           to: settings.atmosBoostAmount
         )
       }
+      if settings.overlayPosition != oldValue.overlayPosition {
+        volumeOverlay.position = settings.overlayPosition
+        // Preview the new spot right away.
+        Task { [weak self] in await self?.syncAndShowOverlay() }
+      }
       if settings.autoStandbySeconds != oldValue.autoStandbySeconds,
         settings.autoStandbySeconds != maxIdleTime
       {
@@ -151,6 +156,7 @@ import Observation
     self.musicPlayer = musicPlayer
     self.mediaKeyPermissions = MediaKeyPermissions.current(musicPlayer: musicPlayer)
     self.settings = initialSettings ?? settingsStore.load()
+    overlay.position = settings.overlayPosition
 
     Self.runningInstance = self
 

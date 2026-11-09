@@ -22,6 +22,10 @@ import SwiftUI
 @MainActor final class VolumeOverlayManager {
   private var panel: NSPanel?
   let state = VolumeOverlayState()
+  var position: OverlayPosition = .center
+
+  /// Gap between the visible card and the menu bar / screen edge for the top positions.
+  private static let edgeInset: CGFloat = 12
   private var dismissTask: Task<Void, Never>?
 
   /// Applies `update` to the current overlay state, then presents it.
@@ -32,6 +36,7 @@ import SwiftUI
     if panel == nil { createPanel() }
     guard let panel else { return }
 
+    fitPanelToContent()
     updatePanelPosition()
 
     // Cancel existing dismissal task
@@ -81,15 +86,51 @@ import SwiftUI
     guard let screen else { return }
     let sf = screen.visibleFrame
     let pf = panel.frame
-    panel.setFrameOrigin(NSPoint(x: sf.midX - pf.width / 2, y: sf.midY - pf.height / 2))
+    // The panel may carry a transparent shadow margin; align the visible card, not the window.
+    let margin = (pf.width - (hostingView?.fittingSize.width ?? pf.width)) / 2
+    let inset = Self.edgeInset
+    let topY = sf.maxY - inset - pf.height + margin
+    let origin: NSPoint
+    switch position {
+    case .center: origin = NSPoint(x: sf.midX - pf.width / 2, y: sf.midY - pf.height / 2)
+    case .topCenter: origin = NSPoint(x: sf.midX - pf.width / 2, y: topY)
+    case .topRight: origin = NSPoint(x: sf.maxX - inset - pf.width + margin, y: topY)
+    }
+    panel.setFrameOrigin(origin)
+  }
+
+  /// Corner radius shared by the AppKit glass window and the SwiftUI fallback card.
+  static let cornerRadius: CGFloat = 26
+
+  private var hostingView: NSHostingView<VolumeOverlayView>?
+
+  /// Shrinks the panel to the SwiftUI content so the window outline (and its system shadow) is the
+  /// rounded card itself, as with the built-in volume and brightness OSDs.
+  private func fitPanelToContent() {
+    guard let panel, let hostingView else { return }
+    hostingView.layoutSubtreeIfNeeded()
+    let fitting = hostingView.fittingSize
+    guard fitting.width > 0, fitting.height > 0 else { return }
+    let size = panelSize(for: fitting)
+    guard panel.frame.size != size else { return }
+    panel.setContentSize(size)
+    panel.invalidateShadow()
+  }
+
+  private func panelSize(for content: NSSize) -> NSSize {
+    guard #available(macOS 26.0, *) else { return content }
+    let margin = GlassOverlayContainerView.shadowMargin
+    return NSSize(width: content.width + margin * 2, height: content.height + margin * 2)
   }
 
   private func createPanel() {
     let hosting = NSHostingView(rootView: VolumeOverlayView(state: state))
-    hosting.translatesAutoresizingMaskIntoConstraints = false
+    hosting.sizingOptions = [.intrinsicContentSize]
+    hostingView = hosting
+    let initialSize = panelSize(for: hosting.fittingSize)
 
     let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 320, height: 210),
+      contentRect: NSRect(origin: .zero, size: initialSize),
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false
@@ -97,16 +138,149 @@ import SwiftUI
     panel.level = .popUpMenu
     panel.backgroundColor = .clear
     panel.isOpaque = false
-    panel.hasShadow = true
+    // macOS 26+ draws its own elevation shadow inside the panel's transparent margin.
+    if #available(macOS 26.0, *) { panel.hasShadow = false } else { panel.hasShadow = true }
     panel.ignoresMouseEvents = true
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
     panel.becomesKeyOnlyIfNeeded = true
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    panel.contentView = hosting
+    if #available(macOS 26.0, *) {
+      // The window itself is the glass, like the system OSDs: AppKit draws the rim highlight and
+      // the shadow follows the rounded outline.
+      panel.contentView = GlassOverlayContainerView(
+        content: hosting,
+        cornerRadius: Self.cornerRadius
+      )
+    } else {
+      panel.contentView = hosting
+    }
 
     self.panel = panel
     updatePanelPosition()
+  }
+}
+
+// MARK: - Glass window content (macOS 26+)
+
+/// Hosts the OSD in an `NSGlassEffectView` and gives it the lifted look of the system volume and
+/// brightness OSDs: a wide, soft drop shadow plus a hairline outline that separates the rim from
+/// light backgrounds. The standard borderless-window shadow is too tight for that, so the panel
+/// carries a transparent margin and the shadow is drawn inside it.
+@available(macOS 26.0, *) final class GlassOverlayContainerView: NSView {
+  static let shadowMargin: CGFloat = 40
+
+  private let cornerRadius: CGFloat
+  private let shadowView = NSView()
+  private let outline = CAShapeLayer()
+  private let glass = NSGlassEffectView()
+
+  init(content: NSView, cornerRadius: CGFloat) {
+    self.cornerRadius = cornerRadius
+    super.init(frame: .zero)
+    wantsLayer = true
+
+    shadowView.wantsLayer = true
+    if let layer = shadowView.layer {
+      layer.masksToBounds = false
+      layer.shadowColor = NSColor.black.cgColor
+      layer.shadowOpacity = 0.32
+      layer.shadowRadius = 22
+      layer.shadowOffset = CGSize(width: 0, height: -10)
+      outline.fillColor = nil
+      outline.strokeColor = NSColor.black.withAlphaComponent(0.22).cgColor
+      outline.lineWidth = 1
+      layer.addSublayer(outline)
+    }
+    addSubview(shadowView)
+
+    glass.cornerRadius = cornerRadius
+    glass.contentView = content
+    addSubview(glass)
+  }
+
+  @available(*, unavailable) required init?(coder: NSCoder) {
+    fatalError("init(coder:) is unavailable")
+  }
+
+  override func layout() {
+    super.layout()
+    let card = bounds.insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
+    glass.frame = card
+    shadowView.frame = bounds
+
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    shadowView.layer?.shadowPath = CGPath(
+      roundedRect: card,
+      cornerWidth: cornerRadius,
+      cornerHeight: cornerRadius,
+      transform: nil
+    )
+    // Half a point outside the glass so the hairline frames the rim instead of covering it.
+    let ring = card.insetBy(dx: -0.5, dy: -0.5)
+    outline.path = CGPath(
+      roundedRect: ring,
+      cornerWidth: cornerRadius + 0.5,
+      cornerHeight: cornerRadius + 0.5,
+      transform: nil
+    )
+    CATransaction.commit()
+  }
+}
+
+// MARK: - Background
+
+/// On macOS 26+ the panel's `NSGlassEffectView` is the background, so the content draws none.
+/// Older systems keep the pre-Tahoe material card.
+private struct OverlayGlassBackground: ViewModifier {
+  let cornerRadius: CGFloat
+
+  func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    if #available(macOS 26.0, *) {
+      content
+    } else {
+      content.background {
+        shape.fill(.ultraThinMaterial).overlay {
+          shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        }.shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 8)
+      }
+    }
+  }
+}
+
+/// Groups the status pills so their glass capsules render and blend as one Liquid Glass layer.
+private struct StatusPillRow<Content: View>: View {
+  @ViewBuilder var content: Content
+
+  var body: some View {
+    if #available(macOS 26.0, *) {
+      GlassEffectContainer(spacing: 6) { HStack(spacing: 6) { content } }
+    } else {
+      HStack(spacing: 6) { content }
+    }
+  }
+}
+
+/// Glass capsule (tinted when active) on macOS 26+, translucent fill on older systems.
+private struct StatusPillBackground: ViewModifier {
+  let isActive: Bool
+  let activeColor: Color
+
+  func body(content: Content) -> some View {
+    if #available(macOS 26.0, *) {
+      content.glassEffect(
+        isActive ? .regular.tint(activeColor.opacity(0.35)) : .regular,
+        in: .capsule
+      )
+    } else {
+      content.background {
+        Capsule().fill(isActive ? activeColor.opacity(0.15) : Color.white.opacity(0.05)).overlay {
+          if isActive { Capsule().strokeBorder(activeColor.opacity(0.35), lineWidth: 0.5) }
+        }
+      }
+    }
   }
 }
 
@@ -180,7 +354,7 @@ struct VolumeOverlayView: View {
       }
 
       // 3. Status Badges Grid
-      HStack(spacing: 6) {
+      StatusPillRow {
         statusPill(
           icon: "moon.fill",
           title: "Night",
@@ -211,14 +385,9 @@ struct VolumeOverlayView: View {
           activeColor: .green
         )
       }
-    }.padding(.vertical, 16).padding(.horizontal, 20).background {
-      RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.ultraThinMaterial).overlay {
-        RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(
-          Color.white.opacity(0.12),
-          lineWidth: 1
-        )
-      }.shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 8)
-    }.frame(width: 320).animation(.smooth(duration: 0.25), value: state.isNightMode).animation(
+    }.padding(.vertical, 16).padding(.horizontal, 20).modifier(
+      OverlayGlassBackground(cornerRadius: VolumeOverlayManager.cornerRadius)
+    ).frame(width: 320).animation(.smooth(duration: 0.25), value: state.isNightMode).animation(
       .smooth(duration: 0.25),
       value: state.isAmbeoMode
     ).animation(.smooth(duration: 0.15), value: state.volume).animation(
@@ -392,11 +561,7 @@ struct VolumeOverlayView: View {
       Text(title).font(.system(size: 9, weight: .semibold, design: .rounded))
     }.padding(.horizontal, 6).padding(.vertical, 4).foregroundStyle(
       isActive ? activeColor : Color.secondary.opacity(0.6)
-    ).background {
-      Capsule().fill(isActive ? activeColor.opacity(0.15) : Color.white.opacity(0.05)).overlay {
-        if isActive { Capsule().strokeBorder(activeColor.opacity(0.35), lineWidth: 0.5) }
-      }
-    }
+    ).modifier(StatusPillBackground(isActive: isActive, activeColor: activeColor))
   }
 
   private func formatStandby(_ seconds: Int) -> String {

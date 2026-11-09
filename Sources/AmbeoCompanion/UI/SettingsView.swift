@@ -115,6 +115,16 @@ struct SettingsView: View {
         ) { Toggle("", isOn: $model.settings.mediaKeyEnabled).labelsHidden().toggleStyle(.switch) }
 
         LabeledDescription(
+          title: "OSD Position",
+          subtitle:
+            "Where the volume overlay appears. macOS shows volume at the top right and brightness at the top center."
+        ) {
+          Picker("", selection: $model.settings.overlayPosition) {
+            ForEach(OverlayPosition.allCases, id: \.self) { Text($0.displayName).tag($0) }
+          }.labelsHidden()
+        }
+
+        LabeledDescription(
           title: "Stealth Rewind (Experimental)",
           subtitle:
             "Mute AMBEO during audio format switches and rewind Music.app to 0:00 once the soundbar locks onto the new input format."
