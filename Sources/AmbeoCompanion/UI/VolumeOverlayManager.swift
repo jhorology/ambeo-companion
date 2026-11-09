@@ -26,6 +26,15 @@ import SwiftUI
 
   /// Gap between the visible card and the menu bar / screen edge for the top positions.
   private static let edgeInset: CGFloat = 12
+  /// Transparent margin around the card so Liquid Glass bleed (42pt) and elevation shadow
+  /// render without clipping at the borderless window bounds.
+  static let shadowMargin: CGFloat = 44
+
+  private static var effectiveShadowMargin: CGFloat {
+    if #available(macOS 26.0, *) { return shadowMargin }
+    return 0
+  }
+
   private var dismissTask: Task<Void, Never>?
 
   /// Applies `update` to the current overlay state, then presents it.
@@ -38,6 +47,7 @@ import SwiftUI
 
     fitPanelToContent()
     updatePanelPosition()
+    hostingView?.applyGlassTranslucency()
 
     // Cancel existing dismissal task
     dismissTask?.cancel()
@@ -86,8 +96,8 @@ import SwiftUI
     guard let screen else { return }
     let sf = screen.visibleFrame
     let pf = panel.frame
-    // The panel may carry a transparent shadow margin; align the visible card, not the window.
-    let margin = (pf.width - (hostingView?.fittingSize.width ?? pf.width)) / 2
+    // The panel carries a transparent shadow/bleed margin; align the visible card, not the window.
+    let margin = Self.effectiveShadowMargin
     let inset = Self.edgeInset
     let topY = sf.maxY - inset - pf.height + margin
     let origin: NSPoint
@@ -99,37 +109,30 @@ import SwiftUI
     panel.setFrameOrigin(origin)
   }
 
-  /// Corner radius shared by the AppKit glass window and the SwiftUI fallback card.
+  /// Corner radius shared by the Liquid Glass platter and the pre-Tahoe fallback card.
   static let cornerRadius: CGFloat = 26
 
-  private var hostingView: NSHostingView<VolumeOverlayView>?
+  private var hostingView: OverlayHostingView?
 
-  /// Shrinks the panel to the SwiftUI content so the window outline (and its system shadow) is the
-  /// rounded card itself, as with the built-in volume and brightness OSDs.
+  /// Sizes the panel to the SwiftUI content (including its transparent shadow/bleed margin on
+  /// macOS 26+) so the Liquid Glass platter and its elevation shadow never clip.
   private func fitPanelToContent() {
     guard let panel, let hostingView else { return }
     hostingView.layoutSubtreeIfNeeded()
     let fitting = hostingView.fittingSize
     guard fitting.width > 0, fitting.height > 0 else { return }
-    let size = panelSize(for: fitting)
-    guard panel.frame.size != size else { return }
-    panel.setContentSize(size)
+    guard panel.frame.size != fitting else { return }
+    panel.setContentSize(fitting)
     panel.invalidateShadow()
   }
 
-  private func panelSize(for content: NSSize) -> NSSize {
-    guard #available(macOS 26.0, *) else { return content }
-    let margin = GlassOverlayContainerView.shadowMargin
-    return NSSize(width: content.width + margin * 2, height: content.height + margin * 2)
-  }
-
   private func createPanel() {
-    let hosting = NSHostingView(rootView: VolumeOverlayView(state: state))
+    let hosting = OverlayHostingView(rootView: VolumeOverlayView(state: state))
     hosting.sizingOptions = [.intrinsicContentSize]
     hostingView = hosting
-    let initialSize = panelSize(for: hosting.fittingSize)
+    let initialSize = hosting.fittingSize
 
-    let panel = NSPanel(
+    let panel = OverlayGlassPanel(
       contentRect: NSRect(origin: .zero, size: initialSize),
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
@@ -138,108 +141,88 @@ import SwiftUI
     panel.level = .popUpMenu
     panel.backgroundColor = .clear
     panel.isOpaque = false
-    // macOS 26+ draws its own elevation shadow inside the panel's transparent margin.
+    // Native macOS OSDs maintain a consistent appearance across Light and Dark modes while
+    // refracting the screen behind them via WindowServer-aware backdrops.
+    panel.appearance = NSAppearance(named: .darkAqua)
+    // macOS 26+ draws its own Liquid Glass elevation shadow inside the transparent margin.
     if #available(macOS 26.0, *) { panel.hasShadow = false } else { panel.hasShadow = true }
     panel.ignoresMouseEvents = true
     panel.isReleasedWhenClosed = false
     panel.hidesOnDeactivate = false
     panel.becomesKeyOnlyIfNeeded = true
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    if #available(macOS 26.0, *) {
-      // The window itself is the glass, like the system OSDs: AppKit draws the rim highlight and
-      // the shadow follows the rounded outline.
-      panel.contentView = GlassOverlayContainerView(
-        content: hosting,
-        cornerRadius: Self.cornerRadius
-      )
-    } else {
-      panel.contentView = hosting
-    }
+    panel.contentView = hosting
 
     self.panel = panel
     updatePanelPosition()
   }
 }
 
-// MARK: - Glass window content (macOS 26+)
+// MARK: - Active-appearance non-activating panel
 
-/// Hosts the OSD in an `NSGlassEffectView` and gives it the lifted look of the system volume and
-/// brightness OSDs: a wide, soft drop shadow plus a hairline outline that separates the rim from
-/// light backgrounds. The standard borderless-window shadow is too tight for that, so the panel
-/// carries a transparent margin and the shadow is drawn inside it.
-@available(macOS 26.0, *) final class GlassOverlayContainerView: NSView {
-  static let shadowMargin: CGFloat = 40
+/// Mirrors `SystemBannerUI.SystemBannerWindow`: a `.nonactivatingPanel` that never steals focus
+/// from the active app, but reports active/key appearance to AppKit so Liquid Glass (`SDFLayer` /
+/// `CABackdropLayer`) enables WindowServer backdrop refraction (`windowServerAware = 1`), full
+/// 3D edge lensing curvature, and directional specular rim highlights.
+private final class OverlayGlassPanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+  @objc func hasKeyAppearance() -> Bool { true }
+  @objc func _hasKeyAppearance() -> Bool { true }
+  @objc func _hasActiveAppearance() -> Bool { true }
+  @objc func _hasActiveControls() -> Bool { true }
+}
 
-  private let cornerRadius: CGFloat
-  private let shadowView = NSView()
-  private let outline = CAShapeLayer()
-  private let glass = NSGlassEffectView()
-
-  init(content: NSView, cornerRadius: CGFloat) {
-    self.cornerRadius = cornerRadius
-    super.init(frame: .zero)
-    wantsLayer = true
-
-    shadowView.wantsLayer = true
-    if let layer = shadowView.layer {
-      layer.masksToBounds = false
-      layer.shadowColor = NSColor.black.cgColor
-      layer.shadowOpacity = 0.32
-      layer.shadowRadius = 22
-      layer.shadowOffset = CGSize(width: 0, height: -10)
-      outline.fillColor = nil
-      outline.strokeColor = NSColor.black.withAlphaComponent(0.22).cgColor
-      outline.lineWidth = 1
-      layer.addSublayer(outline)
-    }
-    addSubview(shadowView)
-
-    glass.cornerRadius = cornerRadius
-    glass.contentView = content
-    addSubview(glass)
-  }
-
-  @available(*, unavailable) required init?(coder: NSCoder) {
-    fatalError("init(coder:) is unavailable")
-  }
+/// Tunes the `CABackdropLayer`'s `glassBackground` filter in `.darkAqua` so the OSD platter has
+/// slightly higher translucency while preserving full 3D refraction, specular rim highlights, and
+/// elevation shadow.
+private final class OverlayHostingView: NSHostingView<VolumeOverlayView> {
+  private static let darkenOpacity: Double = 0.55
+  private static let maxLuma: Double = 0.60
+  private static let blurRadius: Double = 3.5
 
   override func layout() {
     super.layout()
-    let card = bounds.insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
-    glass.frame = card
-    shadowView.frame = bounds
+    applyGlassTranslucency()
+    DispatchQueue.main.async { [weak self] in self?.applyGlassTranslucency() }
+  }
 
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    shadowView.layer?.shadowPath = CGPath(
-      roundedRect: card,
-      cornerWidth: cornerRadius,
-      cornerHeight: cornerRadius,
-      transform: nil
-    )
-    // Half a point outside the glass so the hairline frames the rim instead of covering it.
-    let ring = card.insetBy(dx: -0.5, dy: -0.5)
-    outline.path = CGPath(
-      roundedRect: ring,
-      cornerWidth: cornerRadius + 0.5,
-      cornerHeight: cornerRadius + 0.5,
-      transform: nil
-    )
-    CATransaction.commit()
+  func applyGlassTranslucency() {
+    guard #available(macOS 26.0, *), let root = self.layer else { return }
+    Self.tuneGlassBackdrop(in: root)
+  }
+
+  private static func tuneGlassBackdrop(in layer: CALayer) {
+    if String(describing: type(of: layer)) == "CABackdropLayer",
+      let filters = layer.filters as? [NSObject]
+    {
+      var changed = false
+      for filter in filters where filter.value(forKey: "name") as? String == "glassBackground" {
+        if (filter.value(forKey: "inputBlurFillDarkenOpacity") as? Double) != darkenOpacity {
+          filter.setValue(darkenOpacity, forKey: "inputBlurFillDarkenOpacity")
+          filter.setValue(maxLuma, forKey: "inputFaceColorMatrixMaxLuma")
+          filter.setValue(maxLuma, forKey: "inputFaceColorMatrixMaxLumaSDR")
+          filter.setValue(blurRadius, forKey: "inputBlurRadius")
+          changed = true
+        }
+      }
+      if changed { layer.filters = filters }
+    }
+    for sublayer in layer.sublayers ?? [] { tuneGlassBackdrop(in: sublayer) }
   }
 }
 
 // MARK: - Background
 
-/// On macOS 26+ the panel's `NSGlassEffectView` is the background, so the content draws none.
-/// Older systems keep the pre-Tahoe material card.
+/// On macOS 26+ applies the native Liquid Glass platter directly in the SwiftUI render tree
+/// (avoiding nested `NSHostingView`/`CAPortalLayer` vibrancy conflicts with inner glass pills)
+/// and pads by `shadowMargin` so the 42pt ambient bleed and elevation shadow are unclipped.
 private struct OverlayGlassBackground: ViewModifier {
   let cornerRadius: CGFloat
 
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     if #available(macOS 26.0, *) {
-      content
+      content.glassEffect(.regular, in: shape).padding(VolumeOverlayManager.shadowMargin)
     } else {
       content.background {
         shape.fill(.ultraThinMaterial).overlay {
@@ -263,23 +246,13 @@ private struct StatusPillRow<Content: View>: View {
   }
 }
 
-/// Glass capsule (tinted when active) on macOS 26+, translucent fill on older systems.
+/// Untinted glass capsule on macOS 26+, translucent fill on older systems.
 private struct StatusPillBackground: ViewModifier {
-  let isActive: Bool
-  let activeColor: Color
-
   func body(content: Content) -> some View {
     if #available(macOS 26.0, *) {
-      content.glassEffect(
-        isActive ? .regular.tint(activeColor.opacity(0.35)) : .regular,
-        in: .capsule
-      )
+      content.glassEffect(.regular, in: .capsule)
     } else {
-      content.background {
-        Capsule().fill(isActive ? activeColor.opacity(0.15) : Color.white.opacity(0.05)).overlay {
-          if isActive { Capsule().strokeBorder(activeColor.opacity(0.35), lineWidth: 0.5) }
-        }
-      }
+      content.background { Capsule().fill(Color.white.opacity(0.06)) }
     }
   }
 }
@@ -291,35 +264,57 @@ struct VolumeOverlayView: View {
 
   private let ledCyan = Color(red: 0.15, green: 0.78, blue: 1.0)
   private let ledPurple = Color(red: 0.75, green: 0.35, blue: 1.0)
-  private let ledWhite = Color(red: 0.75, green: 0.75, blue: 0.75)
-  private let ledDim = Color.white.opacity(0.18)
 
-  @State private var flashOpacity: Double = 1.0
+  @State private var flashIntensity: Double = 1.0
 
+  /// Opaque (`opacity = 1.0`) accent color for the slider bar, ATMOS badge, and preset label.
   private var activeLedColor: Color {
     if state.isNightMode {
       return ledPurple
     } else if state.isVoiceEnhancement {
       return ledCyan
-    } else if state.isAmbeoMode {
-      return ledWhite
     } else {
-      return ledDim
+      return .white
     }
   }
 
-  /// AMBEO brightness based on level:
-  /// Off: dim (0.2)
-  /// Light: subtle glow (0.55)
-  /// Standard: medium glow (0.8)
-  /// Boost: full brightness (1.0)
-  private var logoBrightnessMultiplier: Double {
-    guard state.isAmbeoMode else { return 0.25 }
+  /// Opaque (`opacity = 1.0`) color for the `AMBΞO` logo that expresses AMBEO Level
+  /// (`off` / `light` / `standard` / `boost`) via saturation and brightness instead of alpha.
+  private var ambeoLogoColor: Color {
+    guard state.isAmbeoMode else { return Color(white: 0.38) }
+    let saturationScale: Double
+    let brightnessScale: Double
     switch state.ambeoLevel.lowercased() {
-    case "light": return 0.55
-    case "boost": return 1.0
-    default: return 0.8
+    case "light":
+      saturationScale = 0.42
+      brightnessScale = 0.65
+    case "boost":
+      saturationScale = 1.0
+      brightnessScale = 1.0
+    default:
+      saturationScale = 0.72
+      brightnessScale = 0.84
     }
+    let s = saturationScale * flashIntensity
+    let b = max(0.38, brightnessScale * flashIntensity)
+    if state.isNightMode {
+      return Color(hue: 0.76, saturation: 0.85 * s, brightness: b)
+    } else if state.isVoiceEnhancement {
+      return Color(hue: 0.54, saturation: 0.88 * s, brightness: b)
+    } else {
+      return Color(white: b)
+    }
+  }
+
+  private var logoGlowIntensity: Double {
+    guard state.isAmbeoMode else { return 0.0 }
+    let base: Double
+    switch state.ambeoLevel.lowercased() {
+    case "light": base = 0.45
+    case "boost": base = 1.0
+    default: base = 0.75
+    }
+    return base * flashIntensity
   }
 
   private var flashCount: Int {
@@ -340,7 +335,7 @@ struct VolumeOverlayView: View {
         HStack(spacing: 12) {
           Image(systemName: iconName).font(.system(size: 20, weight: .light)).foregroundStyle(
             .primary
-          ).frame(width: 24)
+          ).frame(width: 24, height: 24)
 
           volumeGaugeWithTicks
 
@@ -375,7 +370,7 @@ struct VolumeOverlayView: View {
           icon: "clock.badge.checkmark",
           title: formatStandby(state.maxIdleTime),
           isActive: state.maxIdleTime > 0,
-          activeColor: .secondary
+          activeColor: .white.opacity(0.85)
         )
 
         statusPill(
@@ -385,17 +380,16 @@ struct VolumeOverlayView: View {
           activeColor: .green
         )
       }
-    }.padding(.vertical, 16).padding(.horizontal, 20).modifier(
+    }.padding(.vertical, 16).padding(.horizontal, 20).frame(width: 320).modifier(
       OverlayGlassBackground(cornerRadius: VolumeOverlayManager.cornerRadius)
-    ).frame(width: 320).animation(.smooth(duration: 0.25), value: state.isNightMode).animation(
-      .smooth(duration: 0.25),
-      value: state.isAmbeoMode
-    ).animation(.smooth(duration: 0.15), value: state.volume).animation(
-      .smooth(duration: 0.15),
-      value: state.isMuted
-    ).onChange(of: state.ambeoLevel) { _, _ in triggerFlashAnimation() }.onChange(
-      of: state.isAmbeoMode
-    ) { _, isAmbeo in if isAmbeo { triggerFlashAnimation() } }
+    ).environment(\.colorScheme, .dark).animation(.smooth(duration: 0.25), value: state.isNightMode)
+      .animation(.smooth(duration: 0.25), value: state.isAmbeoMode).animation(
+        .smooth(duration: 0.15),
+        value: state.volume
+      ).animation(.smooth(duration: 0.15), value: state.isMuted).onChange(of: state.ambeoLevel) {
+        _,
+        _ in triggerFlashAnimation()
+      }.onChange(of: state.isAmbeoMode) { _, isAmbeo in if isAmbeo { triggerFlashAnimation() } }
   }
 
   private func triggerFlashAnimation() {
@@ -403,9 +397,9 @@ struct VolumeOverlayView: View {
     let count = flashCount
     Task { @MainActor in
       for _ in 0..<count {
-        withAnimation(.easeOut(duration: 0.1)) { flashOpacity = 0.2 }
+        withAnimation(.easeOut(duration: 0.1)) { flashIntensity = 0.45 }
         try? await Task.sleep(for: .milliseconds(110))
-        withAnimation(.easeIn(duration: 0.12)) { flashOpacity = 1.0 }
+        withAnimation(.easeIn(duration: 0.12)) { flashIntensity = 1.0 }
         try? await Task.sleep(for: .milliseconds(130))
       }
     }
@@ -424,10 +418,13 @@ struct VolumeOverlayView: View {
         Capsule().fill(Color.white.opacity(0.12)).frame(height: height)
 
         // Progress Fill
-        Capsule().fill(state.isMuted ? Color.secondary : activeLedColor).frame(
-          width: max(0, width * progress),
-          height: height
-        ).shadow(color: state.isMuted ? .clear : activeLedColor.opacity(0.4), radius: 3, x: 0, y: 0)
+        Capsule().fill(activeLedColor).frame(width: max(0, width * progress), height: height)
+          .shadow(
+            color: state.isMuted ? .clear : activeLedColor.opacity(0.4),
+            radius: 3,
+            x: 0,
+            y: 0
+          )
 
         // Tick marks (every 25%: 0%, 25%, 50%, 75%, 100%)
         HStack {
@@ -446,17 +443,15 @@ struct VolumeOverlayView: View {
     HStack(alignment: .center, spacing: 10) {
       // Left side: AMBEO logo & optional DOLBY ATMOS
       HStack(alignment: .center, spacing: 10) {
-        // Product LED-style AMBEO text with brightness modulation and flash
+        // Product LED-style AMBEO text with opaque saturation/brightness modulation and flash
         Text("AMBΞO").font(.system(size: 17, weight: .heavy, design: .default)).tracking(3.5)
-          .foregroundStyle(activeLedColor.opacity(logoBrightnessMultiplier * flashOpacity)).shadow(
-            color: (state.isNightMode || state.isAmbeoMode)
-              ? activeLedColor.opacity(0.9 * logoBrightnessMultiplier * flashOpacity) : .clear,
+          .foregroundStyle(ambeoLogoColor).shadow(
+            color: state.isAmbeoMode ? ambeoLogoColor.opacity(0.9 * logoGlowIntensity) : .clear,
             radius: 6,
             x: 0,
             y: 0
           ).shadow(
-            color: (state.isNightMode || state.isAmbeoMode)
-              ? activeLedColor.opacity(0.4 * logoBrightnessMultiplier * flashOpacity) : .clear,
+            color: state.isAmbeoMode ? ambeoLogoColor.opacity(0.4 * logoGlowIntensity) : .clear,
             radius: 14,
             x: 0,
             y: 0
@@ -561,7 +556,7 @@ struct VolumeOverlayView: View {
       Text(title).font(.system(size: 9, weight: .semibold, design: .rounded))
     }.padding(.horizontal, 6).padding(.vertical, 4).foregroundStyle(
       isActive ? activeColor : Color.secondary.opacity(0.6)
-    ).modifier(StatusPillBackground(isActive: isActive, activeColor: activeColor))
+    ).modifier(StatusPillBackground())
   }
 
   private func formatStandby(_ seconds: Int) -> String {
