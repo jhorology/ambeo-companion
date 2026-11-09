@@ -9,7 +9,12 @@ import Testing
 /// silent browser produces no events at all.
 @MainActor @Suite("Local Network Inference (app side)") struct LocalNetworkStatusTests {
   private func model() -> AppModel {
-    AppModel(settings: AppSettings(), autostart: false, volumeOverlay: RecordingOverlay())
+    AppModel(
+      settings: AppSettings(),
+      autostart: false,
+      volumeOverlay: RecordingOverlay(),
+      musicPlayer: StubMusicPlayer()
+    )
   }
 
   @Test("Nothing found yet, inside the grace window, is probing") func probing() {

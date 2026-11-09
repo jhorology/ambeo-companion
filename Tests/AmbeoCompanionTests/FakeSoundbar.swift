@@ -126,3 +126,16 @@ final class FakeSoundbarProtocol: URLProtocol, @unchecked Sendable {
     update(VolumeOverlayState())
   }
 }
+
+/// Stands in for `MusicPlayerController.shared`, whose initializer sends real Apple Events to the
+/// user's Music.app. When those ran through `NSAppleScript` off the main thread, the reply wait
+/// pumped the main run loop and stalled every MainActor `Task.sleep` in the test process; tests
+/// must not depend on whatever Music.app is doing.
+struct StubMusicPlayer: MusicPlayerControlling {
+  func isRunning() -> Bool { false }
+  func permissionStatus(askUserIfNeeded: Bool) -> MusicAutomationPermissionStatus {
+    .musicNotRunning
+  }
+  func isPlaying() async -> Bool { false }
+  @discardableResult func rewindToStart() async -> Bool { false }
+}

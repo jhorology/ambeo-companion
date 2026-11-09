@@ -27,7 +27,12 @@ import Testing
 
     var settings = AppSettings()
     settings.atmosBoostAmount = 10
-    let model = AppModel(settings: settings, autostart: false, volumeOverlay: RecordingOverlay())
+    let model = AppModel(
+      settings: settings,
+      autostart: false,
+      volumeOverlay: RecordingOverlay(),
+      musicPlayer: StubMusicPlayer()
+    )
     model.ambeoClient = client
     return (model, client, device)
   }

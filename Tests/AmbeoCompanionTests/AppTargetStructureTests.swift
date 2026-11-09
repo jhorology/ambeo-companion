@@ -9,7 +9,12 @@ import Testing
     // shortcuts. Everything below is what the app does before any service touches the system.
     var settings = AppSettings()
     settings.atmosBoostAmount = 5
-    let model = AppModel(settings: settings, autostart: false, volumeOverlay: RecordingOverlay())
+    let model = AppModel(
+      settings: settings,
+      autostart: false,
+      volumeOverlay: RecordingOverlay(),
+      musicPlayer: StubMusicPlayer()
+    )
 
     #expect(model.settings.atmosBoostAmount == 5)
     #expect(model.ambeoClient == nil)
@@ -21,7 +26,12 @@ import Testing
   @Test("The overlay is reached through a protocol so tests can record presentations")
   func overlaySeam() {
     let overlay = RecordingOverlay()
-    let model = AppModel(settings: AppSettings(), autostart: false, volumeOverlay: overlay)
+    let model = AppModel(
+      settings: AppSettings(),
+      autostart: false,
+      volumeOverlay: overlay,
+      musicPlayer: StubMusicPlayer()
+    )
     model.volumeOverlay.show { state in
       state.volume = 0.5
       state.isMuted = true

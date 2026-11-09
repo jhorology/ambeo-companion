@@ -19,39 +19,34 @@ public protocol MusicPlayerControlling: Sendable {
   func permissionStatus(askUserIfNeeded: Bool) -> MusicAutomationPermissionStatus
   func isPlaying() async -> Bool
   @discardableResult func rewindToStart() async -> Bool
+  /// Seeds the cached playback state from `Music.app`. A no-op for players without a cache.
+  func refreshPlaybackStateInBackground()
 }
+
+extension MusicPlayerControlling { public func refreshPlaybackStateInBackground() {} }
 
 public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sendable {
   public static let shared = MusicPlayerController()
   public static let musicBundleIdentifier = "com.apple.Music"
 
-  private static let isPlayingScriptSource = """
-    tell application id "com.apple.Music"
-      if it is running then
-        return (player state is playing)
-      end if
-      return false
-    end tell
-    """
+  // Music.app scripting codes (`sdef /System/Applications/Music.app`).
+  private static let playerStateProperty = fourCC("pPlS")
+  private static let playingState = fourCC("kPSP")
+  private static let playerPositionProperty = fourCC("pPos")
 
-  private static let rewindScriptSource = """
-    tell application id "com.apple.Music"
-      if it is running then
-        set prevPos to player position
-        set player position to 0
-        return prevPos
-      end if
-      return -1.0
-    end tell
-    """
+  /// How long a background query waits for `Music.app` to answer before giving up.
+  private static let replyTimeout: TimeInterval = 2.0
 
-  /// Dedicated serial queue for `NSAppleScript` compilation and execution (`NSAppleScript` is not thread-safe).
+  /// Serial queue for blocking Apple Event round trips so callers never wait on `Music.app`.
+  ///
+  /// Raw Apple Events (`AESendMessage`) are used instead of `NSAppleScript`: while waiting for a
+  /// reply, `NSAppleScript` pumps the HIToolbox event loop, and off the main thread that runs the
+  /// *main* run loop's observers on this queue. SwiftUI then rebuilt the main menu off-main and
+  /// AppKit aborted the app ("Main menu contents may only be modified from the main thread").
   private let scriptQueue = DispatchQueue(
     label: "io.github.jhorology.ambeo-companion.MusicAppleScript",
     qos: .userInteractive
   )
-  private var compiledIsPlayingScript: NSAppleScript?
-  private var compiledRewindScript: NSAppleScript?
 
   /// Real-time playback state cached from `com.apple.Music.playerInfo` distributed notifications
   /// so format transitions never block waiting for `Music.app`'s main thread during CoreAudio hog switches.
@@ -59,14 +54,6 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
 
   public init() {
     setupNotifications()
-    scriptQueue.async { [weak self] in
-      guard let self else { return }
-      self.compiledIsPlayingScript = Self.compileScript(
-        Self.isPlayingScriptSource,
-        name: "isPlaying"
-      )
-      self.compiledRewindScript = Self.compileScript(Self.rewindScriptSource, name: "rewindToStart")
-    }
     refreshPlaybackStateInBackground()
   }
 
@@ -107,11 +94,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
     scriptQueue.async { [weak self] in
       guard let self, self.isRunning(), self.permissionStatus(askUserIfNeeded: false) == .granted
       else { return }
-      let playing = self.executeScriptOnQueue(
-        &self.compiledIsPlayingScript,
-        source: Self.isPlayingScriptSource,
-        action: "seed playback state"
-      )
+      let playing = self.queryIsPlayingOnQueue(action: "seed playback state")
       self.cachedIsPlaying.withLock { current in if current == nil { current = playing } }
     }
   }
@@ -164,10 +147,11 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
           continuation.resume(returning: .musicNotRunning)
           return
         }
-        let playing = self.executeScriptOnQueue(
-          &self.compiledIsPlayingScript,
-          source: Self.isPlayingScriptSource,
-          action: "request Automation permission"
+        // Interactive so macOS may show the Automation consent prompt for this read-only event.
+        let playing = self.queryIsPlayingOnQueue(
+          action: "request Automation permission",
+          options: [.waitForReply, .canInteract],
+          timeout: 60
         )
         let updatedStatus = self.permissionStatus(askUserIfNeeded: false)
         if updatedStatus == .granted { self.cachedIsPlaying.withLock { $0 = playing } }
@@ -246,11 +230,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
           continuation.resume(returning: false)
           return
         }
-        let playing = self.executeScriptOnQueue(
-          &self.compiledIsPlayingScript,
-          source: Self.isPlayingScriptSource,
-          action: "check playback state"
-        )
+        let playing = self.queryIsPlayingOnQueue(action: "check playback state")
         self.cachedIsPlaying.withLock { $0 = playing }
         continuation.resume(returning: playing)
       }
@@ -267,71 +247,107 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
           return
         }
         let start = ContinuousClock.now
-        guard
-          let descriptor = self.executeScriptDescriptorOnQueue(
-            &self.compiledRewindScript,
-            source: Self.rewindScriptSource,
-            action: "rewind player position to 0"
-          )
-        else {
-          continuation.resume(returning: false)
-          return
-        }
-        let prevPos = descriptor.doubleValue
+        let action = "rewind player position to 0"
+        let prevPos = self.sendOnQueue(self.getEvent(Self.playerPositionProperty), action: action)?
+          .doubleValue
+        let setEvent = self.makeEvent(AEEventID(kAESetData))
+        setEvent.setParam(
+          Self.propertySpecifier(Self.playerPositionProperty),
+          forKeyword: keyDirectObject
+        )
+        setEvent.setParam(NSAppleEventDescriptor(double: 0), forKeyword: AEKeyword(keyAEData))
+        let succeeded = self.sendOnQueue(setEvent, action: action) != nil
         let elapsedMs = start.duration(to: ContinuousClock.now).millisecondsString
-        let succeeded = prevPos >= 0
         Logger.audio.debug(
-          "Music.app rewind AppleScript: prevPosition=\(String(format: "%.3f", prevPos))s -> 0.000s (ipc=\(elapsedMs), success=\(succeeded))"
+          "Music.app rewind Apple Event: prevPosition=\(String(format: "%.3f", prevPos ?? -1))s -> 0.000s (ipc=\(elapsedMs), success=\(succeeded))"
         )
         continuation.resume(returning: succeeded)
       }
     }
   }
 
-  private static func compileScript(_ source: String, name: String) -> NSAppleScript? {
-    guard let script = NSAppleScript(source: source) else { return nil }
-    var errorDict: NSDictionary?
-    guard script.compileAndReturnError(&errorDict) else {
-      Logger.audio.warning(
-        "MusicPlayerController: failed to compile AppleScript '\(name)' (\(String(describing: errorDict)))"
-      )
-      return nil
-    }
-    return script
-  }
+  // MARK: - Apple Events
 
-  private func executeScriptOnQueue(
-    _ compiledScript: inout NSAppleScript?,
-    source: String,
-    action: String
+  /// Reads `player state` and reports whether it is `playing`. Must run on `scriptQueue`.
+  private func queryIsPlayingOnQueue(
+    action: String,
+    options: NSAppleEventDescriptor.SendOptions = [.waitForReply, .neverInteract],
+    timeout: TimeInterval = MusicPlayerController.replyTimeout
   ) -> Bool {
-    guard
-      let descriptor = executeScriptDescriptorOnQueue(
-        &compiledScript,
-        source: source,
-        action: action
-      )
-    else { return false }
-    return descriptor.booleanValue
+    let state = sendOnQueue(
+      getEvent(Self.playerStateProperty),
+      action: action,
+      options: options,
+      timeout: timeout
+    )
+    return state?.enumCodeValue == Self.playingState
   }
 
-  private func executeScriptDescriptorOnQueue(
-    _ compiledScript: inout NSAppleScript?,
-    source: String,
-    action: String
+  private func makeEvent(_ eventID: AEEventID) -> NSAppleEventDescriptor {
+    NSAppleEventDescriptor(
+      eventClass: AEEventClass(kAECoreSuite),
+      eventID: eventID,
+      targetDescriptor: NSAppleEventDescriptor(bundleIdentifier: Self.musicBundleIdentifier),
+      returnID: AEReturnID(kAutoGenerateReturnID),
+      transactionID: AETransactionID(kAnyTransactionID)
+    )
+  }
+
+  /// `get <property> of application "Music"`.
+  private func getEvent(_ property: FourCharCode) -> NSAppleEventDescriptor {
+    let event = makeEvent(AEEventID(kAEGetData))
+    event.setParam(Self.propertySpecifier(property), forKeyword: keyDirectObject)
+    return event
+  }
+
+  /// Object specifier for an application-level property (`property <code> of application`).
+  private static func propertySpecifier(_ property: FourCharCode) -> NSAppleEventDescriptor {
+    let spec = NSAppleEventDescriptor.record().coerce(
+      toDescriptorType: DescType(typeObjectSpecifier)
+    )!
+    spec.setDescriptor(
+      NSAppleEventDescriptor(typeCode: DescType(cProperty)),
+      forKeyword: AEKeyword(keyAEDesiredClass)
+    )
+    spec.setDescriptor(
+      NSAppleEventDescriptor(enumCode: DescType(formPropertyID)),
+      forKeyword: AEKeyword(keyAEKeyForm)
+    )
+    spec.setDescriptor(
+      NSAppleEventDescriptor(typeCode: property),
+      forKeyword: AEKeyword(keyAEKeyData)
+    )
+    spec.setDescriptor(NSAppleEventDescriptor.null(), forKeyword: AEKeyword(keyAEContainer))
+    return spec
+  }
+
+  /// Sends `event` and returns the reply's direct object, or nil on any failure. A raw Apple
+  /// Event never launches `Music.app` and blocks only this queue while it waits for the reply.
+  private func sendOnQueue(
+    _ event: NSAppleEventDescriptor,
+    action: String,
+    options: NSAppleEventDescriptor.SendOptions = [.waitForReply, .neverInteract],
+    timeout: TimeInterval = MusicPlayerController.replyTimeout
   ) -> NSAppleEventDescriptor? {
-    if compiledScript == nil { compiledScript = Self.compileScript(source, name: action) }
-    guard let script = compiledScript else {
-      Logger.audio.warning("MusicPlayerController: AppleScript unavailable for \(action)")
+    do {
+      let reply = try event.sendEvent(options: options, timeout: timeout)
+      if let error = reply.paramDescriptor(forKeyword: AEKeyword(keyErrorNumber)),
+        error.int32Value != noErr
+      {
+        Logger.audio.warning(
+          "MusicPlayerController: failed to \(action) (Apple Event error \(error.int32Value))"
+        )
+        return nil
+      }
+      return reply.paramDescriptor(forKeyword: keyDirectObject)
+    } catch {
+      Logger.audio.warning("MusicPlayerController: failed to \(action) (\(error))")
       return nil
     }
-    var errorDict: NSDictionary?
-    let descriptor = script.executeAndReturnError(&errorDict)
-    if let errorDict {
-      Logger.audio.warning("MusicPlayerController: failed to \(action) (\(errorDict))")
-      return nil
-    }
-    return descriptor
+  }
+
+  private static func fourCC(_ code: StaticString) -> FourCharCode {
+    code.withUTF8Buffer { $0.reduce(0) { $0 << 8 | FourCharCode($1) } }
   }
 }
 

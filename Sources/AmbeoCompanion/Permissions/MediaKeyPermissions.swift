@@ -122,10 +122,12 @@ struct MediaKeyPermissions: Equatable {
     }
   }
 
-  static func current() -> Self {
+  static func current(
+    musicPlayer: any MusicPlayerControlling = MusicPlayerController.shared
+  ) -> Self {
     Self(
       accessibility: MediaKeyPermission.accessibility.isGranted,
-      musicAutomation: MusicPlayerController.shared.permissionStatus(askUserIfNeeded: false)
+      musicAutomation: musicPlayer.permissionStatus(askUserIfNeeded: false)
     )
   }
 }

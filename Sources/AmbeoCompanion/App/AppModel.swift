@@ -16,10 +16,13 @@ import Observation
   let audioFormat: AudioFormatCoordinator
   let mediaKeys: MediaKeyCoordinator
   let volumeOverlay: any VolumeOverlayPresenting
+  /// Injected so tests never touch `MusicPlayerController.shared`, whose initializer sends real
+  /// Apple Events to the user's Music.app.
+  let musicPlayer: any MusicPlayerControlling
 
   private(set) var atmosBoost: AtmosBoostCoordinator!
   private(set) var stealthRewindCoordinator: StealthRewindCoordinator?
-  private(set) var mediaKeyPermissions = MediaKeyPermissions.current()
+  private(set) var mediaKeyPermissions: MediaKeyPermissions
 
   private var isShuttingDown = false
   private var lastOSDTask: Task<Void, Never>?
@@ -136,7 +139,8 @@ import Observation
     audioFormat: AudioFormatCoordinator = AudioFormatCoordinator(),
     mediaKeys: MediaKeyCoordinator = MediaKeyCoordinator(),
     autostart: Bool = true,
-    volumeOverlay overlay: any VolumeOverlayPresenting = VolumeOverlayManager()
+    volumeOverlay overlay: any VolumeOverlayPresenting = VolumeOverlayManager(),
+    musicPlayer: any MusicPlayerControlling = MusicPlayerController.shared
   ) {
     self.settingsStore = settingsStore
     self.discovery = discovery
@@ -144,6 +148,8 @@ import Observation
     self.audioFormat = audioFormat
     self.mediaKeys = mediaKeys
     self.volumeOverlay = overlay
+    self.musicPlayer = musicPlayer
+    self.mediaKeyPermissions = MediaKeyPermissions.current(musicPlayer: musicPlayer)
     self.settings = initialSettings ?? settingsStore.load()
 
     Self.runningInstance = self
@@ -151,7 +157,7 @@ import Observation
     stealthRewindCoordinator = StealthRewindCoordinator(
       settleDelay: .milliseconds(settings.stealthRewindDelayMs),
       muteTimeout: StealthRewindCoordinator.defaultMuteTimeout,
-      musicPlayer: MusicPlayerController.shared,
+      musicPlayer: musicPlayer,
       isMutedProvider: { [weak self] in
         guard let self, let client = self.session.activeOrDisconnectingClient else { return nil }
         return await client.getValue(for: AmbeoEndpoint.Player.Mute())
@@ -314,12 +320,14 @@ import Observation
   // MARK: - Permissions & Media Keys Wiring
 
   func refreshMediaKeyPermissions() async {
-    let current = await Task.detached { MediaKeyPermissions.current() }.value
+    let musicPlayer = musicPlayer
+    let current = await Task.detached { MediaKeyPermissions.current(musicPlayer: musicPlayer) }
+      .value
     guard !Task.isCancelled, !isShuttingDown, current != mediaKeyPermissions else { return }
     mediaKeyPermissions = current
     restartSystemEventMonitorIfNeeded()
     if current.musicAutomation == .granted {
-      MusicPlayerController.shared.refreshPlaybackStateInBackground()
+      self.musicPlayer.refreshPlaybackStateInBackground()
     } else if current.musicAutomation == .denied {
       await stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(
         reason: "Music.app Automation permission denied"
@@ -333,11 +341,11 @@ import Observation
         await self?.refreshMediaKeyPermissions()
         guard let self else { return }
         if self.mediaKeyPermissions.isGranted(.musicAutomation) {
-          MusicPlayerController.shared.refreshPlaybackStateInBackground()
+          self.musicPlayer.refreshPlaybackStateInBackground()
         } else {
           MediaKeyPermission.musicAutomation.requestAndOpenSettings {
             await self.refreshMediaKeyPermissions()
-            MusicPlayerController.shared.refreshPlaybackStateInBackground()
+            self.musicPlayer.refreshPlaybackStateInBackground()
           }
         }
       }
