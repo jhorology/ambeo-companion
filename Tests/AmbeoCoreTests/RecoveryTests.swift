@@ -143,21 +143,6 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(minimum, 0)
   }
 
-  @MainActor func testBoostSurvivesRestartAndStaysWithOriginalDevice() {
-    let suite = "AmbeoTests.\(UUID())"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
-    let ledger = AtmosBoostLedger(defaults: defaults, key: "boost")
-    ledger.record(20, for: "A")
-    let restarted = AtmosBoostLedger(defaults: defaults, key: "boost")
-    XCTAssertEqual(restarted.amount(for: "A"), 20)
-    XCTAssertEqual(restarted.amount(for: "B"), 0)
-    restarted.record(5, for: "B")
-    restarted.record(0, for: "A")
-    XCTAssertEqual(restarted.amount(for: "A"), 0)
-    XCTAssertEqual(restarted.amount(for: "B"), 5)
-  }
-
   func testAtmosAndMultichannelMustNotFallback() {
     XCTAssertTrue(
       AudioPhysicalFormat(channels: 2, bitDepth: 16, sampleRate: 192000, formatID: 0x6363_2b33)

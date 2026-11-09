@@ -239,11 +239,9 @@ struct SettingsView: View {
     guard currentID.isEmpty || !supportedFormats.contains(where: { $0.id == currentID }) else {
       return
     }
-    let best = supportedFormats.filter { $0.channels == 2 }.sorted {
-      if $0.sampleRate != $1.sampleRate { return $0.distanceFrom48kHz < $1.distanceFrom48kHz }
-      return $0.bitDepth > $1.bitDepth
-    }.first
-    if let id = best?.id { appModel.settings.fallbackAudioFormatID = id }
+    if let best = AudioFormatCoordinator.bestFallbackFormat(from: supportedFormats) {
+      appModel.settings.fallbackAudioFormatID = best.id
+    }
   }
 
   private func applyFallbackNow(formatID: String, deviceUID: String) {

@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoCore
+@testable import AmbeoCompanion
 
 @Suite("Local Network Permission Inference") struct LocalNetworkPermissionStatusTests {
   private func instant(ago: Duration) -> ContinuousClock.Instant { ContinuousClock.now - ago }

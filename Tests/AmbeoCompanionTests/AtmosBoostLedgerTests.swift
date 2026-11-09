@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoCore
+@testable import AmbeoCompanion
 
 /// 🟡6: the AMBEO remembers its volume across standby and power loss, so the ledger must survive
 /// every app-side event. Clearing it on a power cycle makes the next Atmos transition boost the

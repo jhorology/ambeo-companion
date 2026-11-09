@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoCore
+@testable import AmbeoCompanion
 
 @Suite("Volume Adjustment Math") struct VolumeAdjustmentTests {
   @Test("Values clamp into the device range") func clamping() {

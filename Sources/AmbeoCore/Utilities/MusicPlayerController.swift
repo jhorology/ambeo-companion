@@ -336,7 +336,7 @@ public final class MusicPlayerController: MusicPlayerControlling, @unchecked Sen
 }
 
 extension Duration {
-  var millisecondsString: String {
+  public var millisecondsString: String {
     let ms = Double(components.seconds) * 1000.0 + Double(components.attoseconds) / 1e15
     return String(format: "%.1fms", ms)
   }

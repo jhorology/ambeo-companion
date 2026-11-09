@@ -2,6 +2,7 @@ import CoreAudio
 import Foundation
 import Testing
 
+@testable import AmbeoCompanion
 @testable import AmbeoCore
 
 @MainActor private final class MockMusicPlayer: MusicPlayerControlling, @unchecked Sendable {

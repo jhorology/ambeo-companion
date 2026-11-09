@@ -11,30 +11,23 @@ let package = Package(
     .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.1.0"),
   ],
   targets: [
-    // Core
+    // Core (app-independent reusable networking, CoreAudio, and system event primitives)
     .target(
       name: "AmbeoCore",
       dependencies: [.product(name: "Logging", package: "swift-log")],
       path: "Sources/AmbeoCore"
     ), .testTarget(name: "AmbeoCoreTests", dependencies: ["AmbeoCore"]),
-    // The app itself (AppModel, SwiftUI scenes, views, delegate). It is a library target on
-    // purpose: SPM refuses a test target for an executableTarget, and AppModel holds the
-    // reconnect / telemetry / Atmos Boost logic that needs real tests.
-    .target(
-      name: "AmbeoApp",
+    // Application (UI skeleton + feature coordinators)
+    .executableTarget(
+      name: "AmbeoCompanion",
       dependencies: [
         "AmbeoCore", .product(name: "Logging", package: "swift-log"),
         .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
       ],
-      path: "Sources/AmbeoApp"
-    ), .testTarget(name: "AmbeoAppTests", dependencies: ["AmbeoApp", "AmbeoCore"]),
-    // Thin shim: main.swift calls AmbeoAppMain.run().
-    .executableTarget(
-      name: "AmbeoCompanion",
-      dependencies: ["AmbeoApp"],
       path: "Sources/AmbeoCompanion",
       exclude: ["Info.plist", "AmbeoCompanion.entitlements", "Resources"]
-    ),
+    ), .testTarget(name: "AmbeoCompanionTests", dependencies: ["AmbeoCompanion", "AmbeoCore"]),
+    // Experiments
     .executableTarget(
       name: "DiscoverAmbeo",
       dependencies: ["AmbeoCore"],

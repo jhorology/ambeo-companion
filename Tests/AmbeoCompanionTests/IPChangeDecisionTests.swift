@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoApp
+@testable import AmbeoCompanion
 
 /// The reconnect decision behind `debouncedReconnectIfIPChanged`. A wrong answer here tears down a
 /// live session, which is why it is a pure function with tests.

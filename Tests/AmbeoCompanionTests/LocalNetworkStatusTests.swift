@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoApp
+@testable import AmbeoCompanion
 @testable import AmbeoCore
 
 /// The inference the menu bar and the Permissions window show when macOS blocks local-network

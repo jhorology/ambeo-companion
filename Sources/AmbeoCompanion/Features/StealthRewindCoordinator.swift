@@ -1,3 +1,4 @@
+import AmbeoCore
 import CoreAudio
 import Foundation
 import Logging

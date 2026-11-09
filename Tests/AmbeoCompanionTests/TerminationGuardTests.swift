@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoApp
+@testable import AmbeoCompanion
 
 /// 🟡13: Quit must not hang behind an unresponsive soundbar.
 /// Lock-guarded flag so a `@Sendable` work closure can report completion.

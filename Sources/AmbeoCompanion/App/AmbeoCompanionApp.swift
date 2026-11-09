@@ -2,14 +2,20 @@ import AmbeoCore
 import Logging
 import SwiftUI
 
-struct AmbeoCompanionApp: App {
+@main struct AmbeoCompanionApp: App {
   @NSApplicationDelegateAdaptor(CompanionAppDelegate.self) private var delegate
-  @State private var appModel = AppModel()
+  @State private var appModel: AppModel
   @State private var didOfferDeviceSetup = false
   @State private var didOfferPermissionSetup = false
   @State private var didOfferLocalNetworkHint = false
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openURL) private var openURL
+
+  init() {
+    LogManager.setup(bid: Bundle.id)
+    Logger.lifecycle.debug("Start with Bundle ID: \(Bundle.id)")
+    _appModel = State(initialValue: AppModel())
+  }
 
   private func openPermissionWindow() {
     NSApp.setActivationPolicy(.regular)
@@ -203,25 +209,5 @@ struct AmbeoCompanionApp: App {
         perform: handleWillClose
       )
     }.windowResizability(.contentSize)
-  }
-}
-
-@MainActor final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
-  /// Upper bound for `prepareForTermination()`. Its cleanup contains several HTTP requests (unmute,
-  /// boost revert, client shutdown), so an unresponsive soundbar must not hang Quit. Work that does
-  /// not finish keeps its ledger state (boost / mute), and the next launch reconciles it.
-  // The Quit deadline lives in TerminationGuard.grace.
-
-  private var isTerminating = false
-
-  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard let model = AppModel.runningInstance else { return .terminateNow }
-    guard !isTerminating else { return .terminateLater }
-    isTerminating = true
-    Task {
-      await TerminationGuard.run(work: { await model.prepareForTermination() })
-      sender.reply(toApplicationShouldTerminate: true)
-    }
-    return .terminateLater
   }
 }

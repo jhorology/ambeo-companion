@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoApp
+@testable import AmbeoCompanion
 
 @MainActor @Suite("App Target Structure") struct AppTargetStructureTests {
   @Test("AppModel runs headless when services are not started") func headlessConstruction() {
@@ -27,8 +27,8 @@ import Testing
       state.isMuted = true
     }
     #expect(overlay.presentations == 1)
-    // The production implementation satisfies the same protocol.
-    #expect(VolumeOverlayManager() is VolumeOverlayPresenting)
+    let productionOverlay: any VolumeOverlayPresenting = VolumeOverlayManager()
+    #expect(productionOverlay is VolumeOverlayManager)
   }
 
   @Test("Bundle id has a development fallback outside a bundle") func bundleIdentifier() {

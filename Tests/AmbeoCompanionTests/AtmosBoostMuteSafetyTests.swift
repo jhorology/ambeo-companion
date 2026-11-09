@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AmbeoApp
+@testable import AmbeoCompanion
 @testable import AmbeoCore
 
 /// The behaviour behind 🔴3: a volume write unmutes AMBEO hardware, so Atmos Boost must not write

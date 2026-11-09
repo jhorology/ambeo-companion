@@ -1,6 +1,6 @@
 import Foundation
 
-@testable import AmbeoApp
+@testable import AmbeoCompanion
 @testable import AmbeoCore
 
 /// A scripted AMBEO Mini. Answers `/api/getData` and `/api/setData` the way the firmware does
