@@ -252,7 +252,6 @@ import Observation
           return
         }
 
-        let initialSoundbarAtmos = initialState.audioFormat?.isAtmos == true
         let initialMaxIdleTime = initialState.maxIdleTime
         if initialMaxIdleTime != self.settings.autoStandbySeconds {
           Logger.lifecycle.info(
@@ -262,7 +261,9 @@ import Observation
         } else {
           self.session.maxIdleTime = initialMaxIdleTime
         }
-        self.atmosBoost.evaluateAtmosState(soundbarAtmos: initialSoundbarAtmos)
+        // Re-evaluate the last CoreAudio state so a boost preserved across reconnect is reverted
+        // if Atmos ended while the soundbar was unreachable.
+        self.atmosBoost.evaluateAtmosState()
       }
     )
   }
@@ -424,12 +425,10 @@ import Observation
 
       if path == AmbeoEndpoint.Audio.DecoderAudioFormat().path {
         let fmt = await client.state.audioFormat
-        let soundbarAtmos = fmt?.isAtmos == true
         Logger.audio.debug(
-          "Soundbar audio format: codec=\(fmt?.codec ?? "none"), channels=\(fmt?.channels ?? 0), isAtmos=\(soundbarAtmos)"
+          "Soundbar audio format: codec=\(fmt?.codec ?? "none"), channels=\(fmt?.channels ?? 0), isAtmos=\(fmt?.isAtmos == true)"
         )
         self.stealthRewindCoordinator?.handleSoundbarFormatChange(fmt)
-        self.atmosBoost.evaluateAtmosState(soundbarAtmos: soundbarAtmos)
       }
 
       if path == AmbeoEndpoint.System.MaxIdleTime().path {

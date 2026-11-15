@@ -3,7 +3,8 @@ import Foundation
 import Logging
 import Observation
 
-/// Coordinates Dolby Atmos detection (combining CoreAudio physical format and AMBEO DSP format)
+/// Coordinates Dolby Atmos detection (from the Mac's CoreAudio physical output format only; the
+/// AMBEO decoder format is ignored so other HDMI sources such as Apple TV never trigger a boost)
 /// and Atmos Boost volume adjustments:
 /// - Applies a 500 ms deactivation grace period to ignore transient format drops during track switches
 /// - Serializes apply / adjust / revert volume writes in an ordered transition queue
@@ -18,7 +19,6 @@ import Observation
   let boostLedger: AtmosBoostLedger
 
   private(set) var isCoreAudioAtmos: Bool = false
-  private(set) var isSoundbarAtmos: Bool = false
   private(set) var isAtmosActive: Bool = false
   var connectedUid: String = ""
   var isShuttingDown: Bool = false
@@ -71,7 +71,6 @@ import Observation
     // If a boost was already applied to the soundbar hardware, resetting appliedAtmosBoost to 0
     // would cause the re-established client to apply another boost on top (+25% twice).
     isAtmosActive = appliedAtmosBoost > 0
-    isSoundbarAtmos = false
     return previousTransition
   }
 
@@ -80,15 +79,15 @@ import Observation
     isAtmosActive = appliedAtmosBoost > 0
   }
 
-  func evaluateAtmosState(coreAudioAtmos: Bool? = nil, soundbarAtmos: Bool? = nil) {
+  /// Pass nil to re-evaluate the last known CoreAudio state (e.g. after a soundbar reconnect).
+  func evaluateAtmosState(coreAudioAtmos: Bool? = nil) {
     if let ca = coreAudioAtmos { isCoreAudioAtmos = ca }
-    if let sa = soundbarAtmos { isSoundbarAtmos = sa }
 
     guard !isShuttingDown else { return }
-    let rawIsAtmos = isCoreAudioAtmos || isSoundbarAtmos
+    let rawIsAtmos = isCoreAudioAtmos
 
     if rawIsAtmos {
-      // Atmos detected by CoreAudio or Soundbar DSP
+      // Atmos (or multichannel) detected on the Mac's CoreAudio output
       if let task = atmosDeactivationTask {
         Logger.audio.debug(
           "Dolby Atmos detected while deactivation grace period was pending. Cancelling deactivation."
@@ -207,9 +206,7 @@ import Observation
     guard !isShuttingDown, isAtmos == isAtmosActive, let client = clientProvider() else { return }
 
     if isAtmos {
-      Logger.audio.info(
-        "Dolby Atmos detected (CoreAudio: \(isCoreAudioAtmos), Soundbar: \(isSoundbarAtmos))"
-      )
+      Logger.audio.info("Dolby Atmos detected on CoreAudio output")
       let targetAmount = boostAmountProvider()
       if targetAmount > 0 && appliedAtmosBoost == 0 {
         let boost = Int(targetAmount)
@@ -326,7 +323,6 @@ import Observation
       appliedAtmosBoost = 0
       isAtmosActive = false
       isCoreAudioAtmos = false
-      isSoundbarAtmos = false
       Logger.audio.info("Atmos Boost reverted before sleep: \(current) → \(newVol) (-\(boost)%)")
     } catch {
       Logger.audio.warning(

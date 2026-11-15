@@ -111,7 +111,7 @@ import Testing
 
     await client.register(AmbeoEndpoint.Player.Volume())
 
-    coordinator.evaluateAtmosState(soundbarAtmos: true)
+    coordinator.evaluateAtmosState(coreAudioAtmos: true)
     try await Task.sleep(for: .milliseconds(30))
 
     // Refused while muted
