@@ -14,6 +14,10 @@ final class FakeSoundbarProtocol: URLProtocol, @unchecked Sendable {
 
     var muted = false
     var volume = 30
+    var ledBarBrightness = 50
+    var codecLedBrightness = 50
+    var logoBrightness = 50
+    var logoLedEnabled = true
     /// False models an endpoint the firmware does not answer, i.e. an unknown mute state.
     var muteEndpointExists = true
 
@@ -99,6 +103,20 @@ final class FakeSoundbarProtocol: URLProtocol, @unchecked Sendable {
       respond(
         #"{"value":{"type":"i32_","i32_":\#(device.volume)},"edit":{"step":"1","min":"0","max":"100"}}"#
       )
+    case "ui:/settings/interface/ledBrightness":
+      respond(
+        #"{"value":{"type":"i32_","i32_":\#(device.ledBarBrightness)},"edit":{"step":"1","min":"0","max":"100"}}"#
+      )
+    case "ui:/settings/interface/codecLedBrightness":
+      respond(
+        #"{"value":{"type":"i32_","i32_":\#(device.codecLedBrightness)},"edit":{"step":"1","min":"0","max":"100"}}"#
+      )
+    case "ui:/settings/interface/ambeoSection/brightness":
+      respond(
+        #"{"value":{"type":"i32_","i32_":\#(device.logoBrightness)},"edit":{"step":"1","min":"0","max":"100"}}"#
+      )
+    case "settings:/popcorn/ui/ledStatus":
+      respond(#"{"value":{"type":"bool_","bool_":\#(device.logoLedEnabled)}}"#)
     default: respond(#"{"value":{"type":"null_"}}"#)
     }
   }
@@ -120,11 +138,12 @@ final class FakeSoundbarProtocol: URLProtocol, @unchecked Sendable {
 /// Stands in for the NSPanel-backed overlay so AppModel can run headless in tests.
 @MainActor final class RecordingOverlay: VolumeOverlayPresenting {
   private(set) var presentations = 0
+  let lastState = VolumeOverlayState()
   var position: OverlayPosition = .center
 
   func show(_ update: (VolumeOverlayState) -> Void) {
     presentations += 1
-    update(VolumeOverlayState())
+    update(lastState)
   }
 }
 

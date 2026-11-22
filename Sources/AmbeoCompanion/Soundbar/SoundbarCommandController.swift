@@ -5,7 +5,30 @@ import Logging
 /// Executes user-initiated remote control commands against `AmbeoClient` and holds pure helper
 /// functions for preset/level cycling and OSD path eligibility.
 @MainActor enum SoundbarCommandController {
+  enum LedTarget: Sendable, Equatable {
+    case all
+    case ledBar
+    case ambeoLogo
+    case codecLed
+
+    nonisolated var osdTitle: String {
+      switch self {
+      case .all: return "ALL LEDS"
+      case .ledBar: return "LED BAR"
+      case .ambeoLogo: return "LOGO LED"
+      case .codecLed: return "CODEC LED"
+      }
+    }
+  }
+
   // MARK: - Pure Helpers (Testable without a client)
+
+  nonisolated static let ledBrightnessLevels: [Int] = [0, 25, 50, 100]
+
+  nonisolated static func nextLedBrightness(after current: Int) -> Int {
+    let clamped = max(0, current)
+    return ledBrightnessLevels.first(where: { $0 > clamped }) ?? 0
+  }
 
   nonisolated static func nextAmbeoLevel(after current: String) -> String {
     let levels = AmbeoEndpoint.Audio.AmbeoLevel.allLevels
@@ -21,7 +44,18 @@ import Logging
     return "adaptive"
   }
 
+  nonisolated static func ledTarget(forPath path: String) -> LedTarget? {
+    switch path {
+    case AmbeoEndpoint.UI.LedBarBrightness().path: return .ledBar
+    case AmbeoEndpoint.UI.AmbeoLogoBrightness().path, AmbeoEndpoint.UI.AmbeoLogoState().path:
+      return .ambeoLogo
+    case AmbeoEndpoint.UI.CodecLedBrightness().path: return .codecLed
+    default: return nil
+    }
+  }
+
   nonisolated static func isOSDEligible(path: String, currentPreset: String) -> Bool {
+    if ledTarget(forPath: path) != nil { return true }
     let activeAmbeoLevelPath =
       "settings:/popcorn/audio/audioPresets/ambeoModeLevel_\(currentPreset.lowercased())"
     let eligiblePaths: Set<String> = [
@@ -191,5 +225,108 @@ import Logging
       Logger.lifecycle.error("Failed to awake soundbar: \(error.localizedDescription)")
       return false
     }
+  }
+
+  // MARK: - LED Brightness Commands
+
+  static func setLedBarBrightness(_ brightness: Int, client: AmbeoClient) async -> Bool {
+    let clamped = VolumeAdjustment.clamped(brightness, min: 0, max: 100)
+    do {
+      try await client.set(
+        AmbeoEndpoint.UI.LedBarBrightness(),
+        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(clamped)}"
+      )
+      Logger.audio.info("LED Bar Brightness -> \(clamped)%")
+      return true
+    } catch {
+      Logger.audio.warning("Failed to set LED Bar Brightness (\(error.localizedDescription))")
+      return false
+    }
+  }
+
+  static func setCodecLedBrightness(_ brightness: Int, client: AmbeoClient) async -> Bool {
+    let clamped = VolumeAdjustment.clamped(brightness, min: 0, max: 100)
+    do {
+      try await client.set(
+        AmbeoEndpoint.UI.CodecLedBrightness(),
+        valueJSON: "{\"type\":\"i32_\",\"i32_\":\(clamped)}"
+      )
+      Logger.audio.info("Codec LED Brightness -> \(clamped)%")
+      return true
+    } catch {
+      Logger.audio.warning("Failed to set Codec LED Brightness (\(error.localizedDescription))")
+      return false
+    }
+  }
+
+  static func setAmbeoLogoBrightness(_ brightness: Int, client: AmbeoClient) async -> Bool {
+    let clamped = VolumeAdjustment.clamped(brightness, min: 0, max: 100)
+    if clamped == 0 {
+      // AMBEO Logo has a dedicated on/off switch (`settings:/popcorn/ui/ledStatus`) in addition
+      // to `ambeoSection/brightness`. Turning `ledStatus` off guarantees full extinction even on
+      // firmware builds whose brightness slider minimum is > 0.
+      try? await client.set(
+        AmbeoEndpoint.UI.AmbeoLogoBrightness(),
+        valueJSON: "{\"type\":\"i32_\",\"i32_\":0}"
+      )
+      do {
+        try await client.set(
+          AmbeoEndpoint.UI.AmbeoLogoState(),
+          valueJSON: "{\"type\":\"bool_\",\"bool_\":false}"
+        )
+        Logger.audio.info("AMBEO Logo Brightness -> Off (0%)")
+        return true
+      } catch {
+        Logger.audio.warning("Failed to turn off AMBEO Logo (\(error.localizedDescription))")
+        return false
+      }
+    } else {
+      do {
+        try await client.set(
+          AmbeoEndpoint.UI.AmbeoLogoBrightness(),
+          valueJSON: "{\"type\":\"i32_\",\"i32_\":\(clamped)}"
+        )
+        if !(await client.state.isLogoLedEnabled) {
+          try await client.set(
+            AmbeoEndpoint.UI.AmbeoLogoState(),
+            valueJSON: "{\"type\":\"bool_\",\"bool_\":true}"
+          )
+        }
+        Logger.audio.info("AMBEO Logo Brightness -> \(clamped)%")
+        return true
+      } catch {
+        Logger.audio.warning("Failed to set AMBEO Logo Brightness (\(error.localizedDescription))")
+        return false
+      }
+    }
+  }
+
+  static func cycleLedBarBrightness(client: AmbeoClient) async -> Int? {
+    let current = await client.state.ledBarBrightness
+    let target = nextLedBrightness(after: current)
+    return await setLedBarBrightness(target, client: client) ? target : nil
+  }
+
+  static func cycleCodecLedBrightness(client: AmbeoClient) async -> Int? {
+    let current = await client.state.codecLedBrightness
+    let target = nextLedBrightness(after: current)
+    return await setCodecLedBrightness(target, client: client) ? target : nil
+  }
+
+  static func cycleAmbeoLogoBrightness(client: AmbeoClient) async -> Int? {
+    let s = await client.state
+    let current = s.isLogoLedEnabled ? s.logoBrightness : 0
+    let target = nextLedBrightness(after: current)
+    return await setAmbeoLogoBrightness(target, client: client) ? target : nil
+  }
+
+  static func cycleAllLedsBrightness(client: AmbeoClient) async -> Int? {
+    let current = await client.state.ledBarBrightness
+    let target = nextLedBrightness(after: current)
+    async let barOk = setLedBarBrightness(target, client: client)
+    async let logoOk = setAmbeoLogoBrightness(target, client: client)
+    async let codecOk = setCodecLedBrightness(target, client: client)
+    let results = await [barOk, logoOk, codecOk]
+    return results.contains(true) ? target : nil
   }
 }

@@ -34,12 +34,14 @@ It resolves volume adjustment limitations in macOS eARC / HDMI passthrough setup
   - Eliminates the need for manual workarounds such as toggling between AirPlay and HDMI.
 - **Global Shortcuts**:
   - Assign customizable hotkeys to control key functions at any time:
+    - Volume Up / Volume Down / Mute (Available when Media Key Interception is turned off)
     - Wake Up Soundbar (Instantly wake from standby and restore HDMI)
     - Toggle AMBEO 3D Mode (On / Off)
     - Cycle AMBEO 3D Level (Light / Standard / Boost)
     - Switch Sound Presets (Adaptive, Music, Movie, News, Neutral, Sports)
     - Toggle Night Mode (On / Off)
     - Toggle Voice Enhancement (On / Off)
+    - Cycle LED Brightness (All LEDs together, or LED Bar / AMBEO Logo / Codec LED individually: Off / 25% / 50% / 100%)
 - **Launch at Login**:
   - Fully compliant with macOS 13+ `ServiceManagement` (`SMAppService.mainApp`). Easily enable background launch at Mac startup with a single click in Settings.
 - **mDNS Device Auto-Discovery**:

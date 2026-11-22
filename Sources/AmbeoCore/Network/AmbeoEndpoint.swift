@@ -161,4 +161,46 @@ public enum AmbeoEndpoint {
       public func apply(_ value: Payload, to state: inout AmbeoState) { state.maxIdleTime = value }
     }
   }
+
+  public enum UI {
+    public struct LedBarBrightness: AmbeoEndpointProtocol {
+      public typealias Payload = Int
+      public typealias Edit = Player.Volume.Edit
+      public let path = "ui:/settings/interface/ledBrightness"
+      public init() {}
+      public func apply(_ value: Payload, to state: inout AmbeoState) {
+        state.ledBarBrightness = value
+      }
+    }
+
+    public struct CodecLedBrightness: AmbeoEndpointProtocol {
+      public typealias Payload = Int
+      public typealias Edit = Player.Volume.Edit
+      public let path = "ui:/settings/interface/codecLedBrightness"
+      public init() {}
+      public func apply(_ value: Payload, to state: inout AmbeoState) {
+        state.codecLedBrightness = value
+      }
+    }
+
+    public struct AmbeoLogoBrightness: AmbeoEndpointProtocol {
+      public typealias Payload = Int
+      public typealias Edit = Player.Volume.Edit
+      public let path = "ui:/settings/interface/ambeoSection/brightness"
+      public init() {}
+      public func apply(_ value: Payload, to state: inout AmbeoState) {
+        state.logoBrightness = value
+      }
+    }
+
+    public struct AmbeoLogoState: AmbeoEndpointProtocol {
+      public typealias Payload = Bool
+      public typealias Edit = NoEdit
+      public let path = "settings:/popcorn/ui/ledStatus"
+      public init() {}
+      public func apply(_ value: Payload, to state: inout AmbeoState) {
+        state.isLogoLedEnabled = value
+      }
+    }
+  }
 }

@@ -34,12 +34,14 @@ macOS の eARC / HDMI パススルー環境における音量調整の制約を�
   - AirPlay への切り替えと HDMI への戻しといった手動のワークアラウンドが不要になります。
 - **グローバルショートカット**:
   - 自由なキーバインドを登録し、いつでも以下の機能をワンキーで操作可能です：
+    - 音量アップ / 音量ダウン / 消音 (Media Key Interception オフ時に割り当て可能)
     - Wake Up Soundbar (スタンバイからの即時強制覚醒・ HDMI 復帰)
     - AMBEO 3D Mode 切替 (On / Off)
     - AMBEO 3D Level 切替 (Light / Standard / Boost)
     - 音声プリセット切替 (Adaptive, Music, Movie, News, Neutral, Sports)
     - Night Mode 切替 (On / Off)
     - Voice Enhancement 切替 (On / Off)
+    - 本体 LED 輝度サイクル (全 LED 一括、または LED Bar / AMBEO Logo / Codec LED 個別: Off / 25% / 50% / 100%)
 
 
 - **ログイン時自動起動 (Launch at Login)**:

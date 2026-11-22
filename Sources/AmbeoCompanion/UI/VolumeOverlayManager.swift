@@ -15,6 +15,7 @@ import SwiftUI
   var powerTarget: String = "online"  // "online", "networkStandby", "standby"
   var audioPreset: String? = nil  // "adaptive", "music", "movie", etc.
   var isAtmos: Bool = false
+  var ledOverlay: LedOverlayInfo? = nil
 }
 
 // MARK: - Manager (MainActor)
@@ -330,7 +331,7 @@ struct VolumeOverlayView: View {
       // 1. AMBEO LED Brand Logo Header
       ambeoLogoHeader
 
-      // 2. Volume Slider & Icon
+      // 2. Volume or LED Brightness Slider & Icon
       VStack(spacing: 6) {
         HStack(spacing: 12) {
           Image(systemName: iconName).font(.system(size: 20, weight: .light)).foregroundStyle(
@@ -339,12 +340,11 @@ struct VolumeOverlayView: View {
 
           volumeGaugeWithTicks
 
-          Text(state.isMuted ? "Muted" : "\(Int(state.volume * 100))%").font(
-            .system(size: 13, weight: .semibold, design: .rounded)
-          ).monospacedDigit().foregroundStyle(state.isMuted ? .secondary : .primary).frame(
-            width: 44,
-            alignment: .trailing
-          )
+          Text(gaugeValueText).font(.system(size: 13, weight: .semibold, design: .rounded))
+            .monospacedDigit().foregroundStyle(isGaugeOff ? .secondary : .primary).frame(
+              width: 44,
+              alignment: .trailing
+            )
         }
       }
 
@@ -407,11 +407,26 @@ struct VolumeOverlayView: View {
 
   // MARK: - Volume Gauge with Ticks
 
+  private var gaugeProgress: Double {
+    if let led = state.ledOverlay { return max(0.0, min(1.0, Double(led.brightness) / 100.0)) }
+    return state.isMuted ? 0.0 : max(0.0, min(1.0, state.volume))
+  }
+
+  private var isGaugeOff: Bool {
+    if let led = state.ledOverlay { return led.brightness <= 0 }
+    return state.isMuted
+  }
+
+  private var gaugeValueText: String {
+    if let led = state.ledOverlay { return led.brightness <= 0 ? "Off" : "\(led.brightness)%" }
+    return state.isMuted ? "Muted" : "\(Int(state.volume * 100))%"
+  }
+
   private var volumeGaugeWithTicks: some View {
     GeometryReader { geo in
       let width = geo.size.width
       let height: CGFloat = 6
-      let progress = state.isMuted ? 0.0 : max(0.0, min(1.0, state.volume))
+      let progress = gaugeProgress
 
       ZStack(alignment: .leading) {
         // Track Background
@@ -419,12 +434,7 @@ struct VolumeOverlayView: View {
 
         // Progress Fill
         Capsule().fill(activeLedColor).frame(width: max(0, width * progress), height: height)
-          .shadow(
-            color: state.isMuted ? .clear : activeLedColor.opacity(0.4),
-            radius: 3,
-            x: 0,
-            y: 0
-          )
+          .shadow(color: isGaugeOff ? .clear : activeLedColor.opacity(0.4), radius: 3, x: 0, y: 0)
 
         // Tick marks (every 25%: 0%, 25%, 50%, 75%, 100%)
         HStack {
@@ -462,8 +472,18 @@ struct VolumeOverlayView: View {
 
       Spacer(minLength: 0)
 
-      // Right side: Preset (pinned to right so it doesn't shift when Atmos toggles)
-      if let preset = state.audioPreset {
+      // Right side: LED target badge (when previewing LED brightness) or Preset
+      if let led = state.ledOverlay {
+        HStack(spacing: 4) {
+          Image(systemName: "light.max").font(.system(size: 10, weight: .bold))
+          Text(led.title).font(.system(size: 10, weight: .heavy, design: .rounded)).tracking(0.8)
+        }.foregroundStyle(activeLedColor).shadow(
+          color: activeLedColor.opacity(0.8),
+          radius: 5,
+          x: 0,
+          y: 0
+        ).shadow(color: activeLedColor.opacity(0.35), radius: 10, x: 0, y: 0)
+      } else if let preset = state.audioPreset {
         HStack(spacing: 4) {
           Image(systemName: presetIcon(preset.lowercased())).font(.system(size: 10, weight: .bold))
           Text(preset.uppercased()).font(.system(size: 10, weight: .heavy, design: .rounded))
@@ -565,6 +585,11 @@ struct VolumeOverlayView: View {
   }
 
   private var iconName: String {
+    if let led = state.ledOverlay {
+      if led.brightness <= 0 { return "sun.min" }
+      if led.brightness < 50 { return "sun.max" }
+      return "sun.max.fill"
+    }
     if state.isMuted || state.volume < 0.005 { return "speaker.slash.fill" }
     if state.volume < 0.34 { return "speaker.wave.1.fill" }
     if state.volume < 0.67 { return "speaker.wave.2.fill" }

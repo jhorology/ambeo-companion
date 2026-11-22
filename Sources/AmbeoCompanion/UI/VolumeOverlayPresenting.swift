@@ -1,6 +1,11 @@
 import AmbeoCore
 import Foundation
 
+struct LedOverlayInfo: Equatable, Sendable {
+  var title: String
+  var brightness: Int
+}
+
 /// AppModel presents the OSD through this protocol so tests can record presentations instead of
 /// opening a real NSPanel. `VolumeOverlayManager` is the production implementation.
 @MainActor protocol VolumeOverlayPresenting: AnyObject {
@@ -15,13 +20,15 @@ extension VolumeOverlayPresenting {
     from client: AmbeoClient?,
     isAtmosActive: Bool,
     explicitVolume: Double? = nil,
-    explicitMute: Bool? = nil
+    explicitMute: Bool? = nil,
+    ledOverlay: LedOverlayInfo? = nil
   ) async {
     guard let client else {
       show { state in
         if let explicitVolume { state.volume = explicitVolume }
         if let explicitMute { state.isMuted = explicitMute }
         state.isAtmos = isAtmosActive
+        state.ledOverlay = ledOverlay
       }
       return
     }
@@ -43,6 +50,7 @@ extension VolumeOverlayPresenting {
       state.powerTarget = s.powerTarget
       state.audioPreset = s.preset
       state.isAtmos = isAtmosActive
+      state.ledOverlay = ledOverlay
     }
   }
 }

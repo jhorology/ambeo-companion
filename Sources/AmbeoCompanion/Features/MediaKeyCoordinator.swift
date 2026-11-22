@@ -4,23 +4,44 @@ import KeyboardShortcuts
 import Logging
 
 extension KeyboardShortcuts.Name {
+  static let volumeUp = Self("volumeUp")
+  static let volumeDown = Self("volumeDown")
+  static let toggleMute = Self("toggleMute")
   static let toggleAmbeoMode = Self("toggleAmbeoMode")
   static let cycleAmbeoLevel = Self("cycleAmbeoLevel")
   static let cyclePreset = Self("cyclePreset")
   static let toggleNightMode = Self("toggleNightMode")
   static let toggleVoiceEnhancement = Self("toggleVoiceEnhancement")
   static let wakeUpSoundbar = Self("wakeUpSoundbar")
+  static let cycleAllLedsBrightness = Self("cycleAllLedsBrightness")
+  static let cycleLedBarBrightness = Self("cycleLedBarBrightness")
+  static let cycleAmbeoLogoBrightness = Self("cycleAmbeoLogoBrightness")
+  static let cycleCodecLedBrightness = Self("cycleCodecLedBrightness")
 }
 
 /// Manages media key interception via `SystemEventMonitor` and global keyboard shortcut bindings.
 @MainActor final class MediaKeyCoordinator {
+  struct VolumeShortcutNames: Sendable {
+    var volumeUp: KeyboardShortcuts.Name = .volumeUp
+    var volumeDown: KeyboardShortcuts.Name = .volumeDown
+    var toggleMute: KeyboardShortcuts.Name = .toggleMute
+
+    var all: [KeyboardShortcuts.Name] { [volumeUp, volumeDown, toggleMute] }
+  }
+
   nonisolated static let defaultHookedKeys: [SystemEvent.MediaKey] = [.soundUp, .soundDown, .mute]
 
   let hookedKeys: [SystemEvent.MediaKey]
+  let volumeShortcuts: VolumeShortcutNames
   private var monitoringSystemEventTask: Task<Void, Never>?
+  private var volumeShortcutTasks: [Task<Void, Never>] = []
 
-  init(hookedKeys: [SystemEvent.MediaKey] = MediaKeyCoordinator.defaultHookedKeys) {
+  init(
+    hookedKeys: [SystemEvent.MediaKey] = MediaKeyCoordinator.defaultHookedKeys,
+    volumeShortcuts: VolumeShortcutNames = VolumeShortcutNames()
+  ) {
     self.hookedKeys = hookedKeys
+    self.volumeShortcuts = volumeShortcuts
   }
 
   /// Pure interception decision for media key events so it can be unit-tested without CoreAudio or CGEventTap.
@@ -89,14 +110,54 @@ extension KeyboardShortcuts.Name {
     monitoringSystemEventTask = nil
   }
 
+  func setVolumeShortcutsEnabled(_ enabled: Bool) {
+    if enabled {
+      KeyboardShortcuts.enable(volumeShortcuts.all)
+    } else {
+      KeyboardShortcuts.disable(volumeShortcuts.all)
+    }
+  }
+
+  func stopKeyboardShortcuts() {
+    for task in volumeShortcutTasks { task.cancel() }
+    volumeShortcutTasks.removeAll()
+    let handlerNames: [KeyboardShortcuts.Name] = [
+      volumeShortcuts.toggleMute, .toggleAmbeoMode, .cycleAmbeoLevel, .cyclePreset,
+      .toggleNightMode, .toggleVoiceEnhancement, .wakeUpSoundbar, .cycleAllLedsBrightness,
+      .cycleLedBarBrightness, .cycleAmbeoLogoBrightness, .cycleCodecLedBrightness,
+    ]
+    for name in handlerNames { KeyboardShortcuts.removeHandler(for: name) }
+  }
+
   func setupKeyboardShortcuts(
+    volumeShortcutsEnabled: Bool = false,
+    onVolumeUp: @escaping @MainActor () async -> Void = {},
+    onVolumeDown: @escaping @MainActor () async -> Void = {},
+    onToggleMute: @escaping @MainActor () async -> Void = {},
     onToggleAmbeoMode: @escaping @MainActor () async -> Void,
     onCycleAmbeoLevel: @escaping @MainActor () async -> Void,
     onCyclePreset: @escaping @MainActor () async -> Void,
     onToggleNightMode: @escaping @MainActor () async -> Void,
     onToggleVoiceEnhancement: @escaping @MainActor () async -> Void,
-    onWakeUpSoundbar: @escaping @MainActor () async -> Void
+    onWakeUpSoundbar: @escaping @MainActor () async -> Void,
+    onCycleAllLedsBrightness: @escaping @MainActor () async -> Void = {},
+    onCycleLedBarBrightness: @escaping @MainActor () async -> Void = {},
+    onCycleAmbeoLogoBrightness: @escaping @MainActor () async -> Void = {},
+    onCycleCodecLedBrightness: @escaping @MainActor () async -> Void = {}
   ) {
+    stopKeyboardShortcuts()
+    setVolumeShortcutsEnabled(volumeShortcutsEnabled)
+
+    let volumeUpEvents = KeyboardShortcuts.repeatingKeyDownEvents(for: volumeShortcuts.volumeUp)
+    let volumeDownEvents = KeyboardShortcuts.repeatingKeyDownEvents(for: volumeShortcuts.volumeDown)
+    volumeShortcutTasks = [
+      Task { for await _ in volumeUpEvents { await onVolumeUp() } },
+      Task { for await _ in volumeDownEvents { await onVolumeDown() } },
+    ]
+    KeyboardShortcuts.onKeyDown(for: volumeShortcuts.toggleMute) {
+      Task { @MainActor in await onToggleMute() }
+    }
+
     KeyboardShortcuts.onKeyDown(for: .toggleAmbeoMode) {
       Task { @MainActor in await onToggleAmbeoMode() }
     }
@@ -112,6 +173,18 @@ extension KeyboardShortcuts.Name {
     }
     KeyboardShortcuts.onKeyDown(for: .wakeUpSoundbar) {
       Task { @MainActor in await onWakeUpSoundbar() }
+    }
+    KeyboardShortcuts.onKeyDown(for: .cycleAllLedsBrightness) {
+      Task { @MainActor in await onCycleAllLedsBrightness() }
+    }
+    KeyboardShortcuts.onKeyDown(for: .cycleLedBarBrightness) {
+      Task { @MainActor in await onCycleLedBarBrightness() }
+    }
+    KeyboardShortcuts.onKeyDown(for: .cycleAmbeoLogoBrightness) {
+      Task { @MainActor in await onCycleAmbeoLogoBrightness() }
+    }
+    KeyboardShortcuts.onKeyDown(for: .cycleCodecLedBrightness) {
+      Task { @MainActor in await onCycleCodecLedBrightness() }
     }
   }
 }

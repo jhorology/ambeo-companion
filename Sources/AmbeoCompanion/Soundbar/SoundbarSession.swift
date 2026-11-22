@@ -107,6 +107,10 @@ import Observation
       group.addTask { await client.register(AmbeoEndpoint.System.MaxIdleTime()) }
       group.addTask { await client.register(AmbeoEndpoint.System.Power()) }
       group.addTask { await client.register(AmbeoEndpoint.Audio.DecoderAudioFormat()) }
+      group.addTask { await client.register(AmbeoEndpoint.UI.LedBarBrightness()) }
+      group.addTask { await client.register(AmbeoEndpoint.UI.CodecLedBrightness()) }
+      group.addTask { await client.register(AmbeoEndpoint.UI.AmbeoLogoBrightness()) }
+      group.addTask { await client.register(AmbeoEndpoint.UI.AmbeoLogoState()) }
     }
   }
 

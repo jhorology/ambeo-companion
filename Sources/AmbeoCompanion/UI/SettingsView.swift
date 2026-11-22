@@ -1,5 +1,4 @@
 import AmbeoCore
-import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
@@ -8,6 +7,7 @@ struct SettingsView: View {
   /// Dynamic lists that are not persisted
   private var availableAudioDevices: [AudioDevice] { appModel.availableAudioDevices }
   @State private var supportedFormats: [AudioPhysicalFormat] = []
+  @State private var isShortcutsPresented = false
 
   /// Picker writes `""` when the saved UID is missing from its tags (first frame, or the
   /// output dropped out of CoreAudio's list). Ignore that write so the setting stays put.
@@ -109,12 +109,6 @@ struct SettingsView: View {
         ) { Toggle("", isOn: $model.isLaunchAtLoginEnabled).labelsHidden().toggleStyle(.switch) }
 
         LabeledDescription(
-          title: "Media Key Interception",
-          subtitle:
-            "Allow this app to intercept Magic Keyboard media keys to synchronize volume with AMBEO."
-        ) { Toggle("", isOn: $model.settings.mediaKeyEnabled).labelsHidden().toggleStyle(.switch) }
-
-        LabeledDescription(
           title: "OSD Position",
           subtitle:
             "Where the volume overlay appears. macOS shows volume at the top right and brightness at the top center."
@@ -186,34 +180,10 @@ struct SettingsView: View {
       // --- Section 4: Shortcuts ---
       Section {
         LabeledDescription(
-          title: "Wake Up Soundbar",
-          subtitle: "Wake up the soundbar and reconnect HDMI TV audio when in standby."
-        ) { KeyboardShortcuts.Recorder(for: .wakeUpSoundbar) }
-
-        LabeledDescription(
-          title: "AMBEO 3D Mode",
-          subtitle: "Toggle AMBEO 3D sound processing On or Off."
-        ) { KeyboardShortcuts.Recorder(for: .toggleAmbeoMode) }
-
-        LabeledDescription(
-          title: "AMBEO 3D Level",
-          subtitle: "Cycle through Light, Standard, and Boost intensity levels."
-        ) { KeyboardShortcuts.Recorder(for: .cycleAmbeoLevel) }
-
-        LabeledDescription(
-          title: "Audio Preset",
-          subtitle: "Cycle through Adaptive, Music, Movie, News, Neutral, and Sports."
-        ) { KeyboardShortcuts.Recorder(for: .cyclePreset) }
-
-        LabeledDescription(
-          title: "Night Mode",
-          subtitle: "Toggle dynamic range compression for late-night listening."
-        ) { KeyboardShortcuts.Recorder(for: .toggleNightMode) }
-
-        LabeledDescription(
-          title: "Voice Enhancement",
-          subtitle: "Toggle dialogue clarity enhancement."
-        ) { KeyboardShortcuts.Recorder(for: .toggleVoiceEnhancement) }
+          title: "Keyboard Shortcuts",
+          subtitle:
+            "Configure Media Key Interception and global shortcuts for volume, audio modes, and LED brightness."
+        ) { Button("Configure...") { isShortcutsPresented = true } }
       } header: {
         Text("Shortcuts")
       }
@@ -233,7 +203,7 @@ struct SettingsView: View {
         for: appModel.settings.audioDeviceUid,
         current: appModel.settings.fallbackAudioFormatID
       )
-    }
+    }.sheet(isPresented: $isShortcutsPresented) { ShortcutsSettingsView().environment(appModel) }
   }
 
   // MARK: - Helpers
@@ -264,7 +234,7 @@ struct SettingsView: View {
 
 // MARK: - Reusable label+description row
 
-private struct LabeledDescription<Content: View>: View {
+struct LabeledDescription<Content: View>: View {
   let title: String
   let subtitle: String
   @ViewBuilder let content: Content

@@ -138,6 +138,10 @@ public struct AmbeoState: Equatable, Sendable {
   public var maxIdleTime: Int = 900
   public var powerTarget: String = "online"
   public var audioFormat: AmbeoAudioFormat? = nil
+  public var ledBarBrightness: Int = 100
+  public var codecLedBrightness: Int = 100
+  public var logoBrightness: Int = 100
+  public var isLogoLedEnabled: Bool = true
 
   public init(
     volume: Int = 0,
@@ -151,7 +155,11 @@ public struct AmbeoState: Equatable, Sendable {
     isEcoMode: Bool = false,
     maxIdleTime: Int = 900,
     powerTarget: String = "online",
-    audioFormat: AmbeoAudioFormat? = nil
+    audioFormat: AmbeoAudioFormat? = nil,
+    ledBarBrightness: Int = 100,
+    codecLedBrightness: Int = 100,
+    logoBrightness: Int = 100,
+    isLogoLedEnabled: Bool = true
   ) {
     self.volume = volume
     self.isMuted = isMuted
@@ -165,5 +173,9 @@ public struct AmbeoState: Equatable, Sendable {
     self.maxIdleTime = maxIdleTime
     self.powerTarget = powerTarget
     self.audioFormat = audioFormat
+    self.ledBarBrightness = ledBarBrightness
+    self.codecLedBrightness = codecLedBrightness
+    self.logoBrightness = logoBrightness
+    self.isLogoLedEnabled = isLogoLedEnabled
   }
 }

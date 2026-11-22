@@ -45,6 +45,7 @@ import Observation
       }
       if settings.mediaKeyEnabled != oldValue.mediaKeyEnabled {
         restartSystemEventMonitorIfNeeded()
+        mediaKeys.setVolumeShortcutsEnabled(!settings.mediaKeyEnabled)
       }
       if settings.stealthRewindEnabled != oldValue.stealthRewindEnabled {
         handleStealthRewindEnabledChanged()
@@ -385,28 +386,27 @@ import Observation
   }
 
   private func handleMediaKey(_ key: SystemEvent.MediaKey) async {
-    guard !isShuttingDown, let client = ambeoClient else { return }
     switch key {
-    case .mute:
-      guard let newMute = await SoundbarCommandController.toggleMute(client: client) else { return }
-      await syncAndShowOverlay(explicitMute: newMute)
-      if !newMute { atmosBoost.replayDeferredVolumeWork(afterUnmute: "media key") }
-    case .soundUp, .soundDown:
-      guard let pct = await SoundbarCommandController.adjustVolume(direction: key, client: client)
-      else { return }
-      await syncAndShowOverlay(explicitVolume: pct, explicitMute: false)
+    case .mute: await toggleMute(unmuteReason: "media key")
+    case .soundUp: await adjustVolume(.soundUp)
+    case .soundDown: await adjustVolume(.soundDown)
     default: break
     }
   }
 
   // MARK: - OSD & Telemetry Status Sync
 
-  private func syncAndShowOverlay(explicitVolume: Double? = nil, explicitMute: Bool? = nil) async {
+  private func syncAndShowOverlay(
+    explicitVolume: Double? = nil,
+    explicitMute: Bool? = nil,
+    ledOverlay: LedOverlayInfo? = nil
+  ) async {
     await volumeOverlay.syncAndShow(
       from: ambeoClient,
       isAtmosActive: isAtmosActive,
       explicitVolume: explicitVolume,
-      explicitMute: explicitMute
+      explicitMute: explicitMute,
+      ledOverlay: ledOverlay
     )
   }
 
@@ -453,11 +453,13 @@ import Observation
         } else if SoundbarCommandController.isOSDEligible(path: path, currentPreset: currentPreset)
         {
           Logger.lifecycle.debug("External change detected on [\(path)]. Displaying synced OSD.")
+          let ledTarget = SoundbarCommandController.ledTarget(forPath: path)
           self.lastOSDTask?.cancel()
           self.lastOSDTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(50))
             guard !Task.isCancelled, let self else { return }
-            await self.syncAndShowOverlay()
+            let ledOverlay = await self.externalLedOverlay(for: ledTarget)
+            await self.syncAndShowOverlay(ledOverlay: ledOverlay)
           }
         } else {
           Logger.lifecycle.debug(
@@ -466,6 +468,20 @@ import Observation
         }
       }
     }
+  }
+
+  private func externalLedOverlay(
+    for target: SoundbarCommandController.LedTarget?
+  ) async -> LedOverlayInfo? {
+    guard let target, let client = ambeoClient else { return nil }
+    let s = await client.state
+    let brightness: Int
+    switch target {
+    case .all, .ledBar: brightness = s.ledBarBrightness
+    case .ambeoLogo: brightness = s.isLogoLedEnabled ? s.logoBrightness : 0
+    case .codecLed: brightness = s.codecLedBrightness
+    }
+    return LedOverlayInfo(title: target.osdTitle, brightness: brightness)
   }
 
   // MARK: - Atmos Boost Forwarding (for Tests)
@@ -486,13 +502,40 @@ import Observation
 
   private func setupKeyboardShortcuts() {
     mediaKeys.setupKeyboardShortcuts(
+      volumeShortcutsEnabled: !settings.mediaKeyEnabled,
+      onVolumeUp: { [weak self] in await self?.volumeUp() },
+      onVolumeDown: { [weak self] in await self?.volumeDown() },
+      onToggleMute: { [weak self] in await self?.toggleMute() },
       onToggleAmbeoMode: { [weak self] in await self?.toggleAmbeoMode() },
       onCycleAmbeoLevel: { [weak self] in await self?.cycleAmbeoLevel() },
       onCyclePreset: { [weak self] in await self?.cyclePreset() },
       onToggleNightMode: { [weak self] in await self?.toggleNightMode() },
       onToggleVoiceEnhancement: { [weak self] in await self?.toggleVoiceEnhancement() },
-      onWakeUpSoundbar: { [weak self] in await self?.wakeUpSoundbar() }
+      onWakeUpSoundbar: { [weak self] in await self?.wakeUpSoundbar() },
+      onCycleAllLedsBrightness: { [weak self] in await self?.cycleAllLedsBrightness() },
+      onCycleLedBarBrightness: { [weak self] in await self?.cycleLedBarBrightness() },
+      onCycleAmbeoLogoBrightness: { [weak self] in await self?.cycleAmbeoLogoBrightness() },
+      onCycleCodecLedBrightness: { [weak self] in await self?.cycleCodecLedBrightness() }
     )
+  }
+
+  func volumeUp() async { await adjustVolume(.soundUp) }
+
+  func volumeDown() async { await adjustVolume(.soundDown) }
+
+  func toggleMute(unmuteReason: String = "shortcut") async {
+    guard !isShuttingDown, let client = ambeoClient else { return }
+    guard let newMute = await SoundbarCommandController.toggleMute(client: client) else { return }
+    await syncAndShowOverlay(explicitMute: newMute)
+    if !newMute { atmosBoost.replayDeferredVolumeWork(afterUnmute: unmuteReason) }
+  }
+
+  private func adjustVolume(_ direction: SystemEvent.MediaKey) async {
+    guard !isShuttingDown, let client = ambeoClient else { return }
+    guard
+      let pct = await SoundbarCommandController.adjustVolume(direction: direction, client: client)
+    else { return }
+    await syncAndShowOverlay(explicitVolume: pct, explicitMute: false)
   }
 
   func toggleAmbeoMode() async {
@@ -568,6 +611,58 @@ import Observation
     await syncAndShowOverlay()
   }
 
+  func cycleAllLedsBrightness() async {
+    guard !isShuttingDown, let client = ambeoClient,
+      let brightness = await SoundbarCommandController.cycleAllLedsBrightness(client: client)
+    else { return }
+    await session.refreshSoundbarState(from: client)
+    await syncAndShowOverlay(
+      ledOverlay: LedOverlayInfo(
+        title: SoundbarCommandController.LedTarget.all.osdTitle,
+        brightness: brightness
+      )
+    )
+  }
+
+  func cycleLedBarBrightness() async {
+    guard !isShuttingDown, let client = ambeoClient,
+      let brightness = await SoundbarCommandController.cycleLedBarBrightness(client: client)
+    else { return }
+    await session.refreshSoundbarState(from: client)
+    await syncAndShowOverlay(
+      ledOverlay: LedOverlayInfo(
+        title: SoundbarCommandController.LedTarget.ledBar.osdTitle,
+        brightness: brightness
+      )
+    )
+  }
+
+  func cycleAmbeoLogoBrightness() async {
+    guard !isShuttingDown, let client = ambeoClient,
+      let brightness = await SoundbarCommandController.cycleAmbeoLogoBrightness(client: client)
+    else { return }
+    await session.refreshSoundbarState(from: client)
+    await syncAndShowOverlay(
+      ledOverlay: LedOverlayInfo(
+        title: SoundbarCommandController.LedTarget.ambeoLogo.osdTitle,
+        brightness: brightness
+      )
+    )
+  }
+
+  func cycleCodecLedBrightness() async {
+    guard !isShuttingDown, let client = ambeoClient,
+      let brightness = await SoundbarCommandController.cycleCodecLedBrightness(client: client)
+    else { return }
+    await session.refreshSoundbarState(from: client)
+    await syncAndShowOverlay(
+      ledOverlay: LedOverlayInfo(
+        title: SoundbarCommandController.LedTarget.codecLed.osdTitle,
+        brightness: brightness
+      )
+    )
+  }
+
   // MARK: - System Lifecycle (Sleep / Wake / Termination)
 
   func prepareForTermination() async {
@@ -580,6 +675,7 @@ import Observation
       self?.stealthRewindCoordinator?.resetObservedFormat()
     })
     mediaKeys.stopMonitoring()
+    mediaKeys.stopKeyboardShortcuts()
     await stealthRewindCoordinator?.cancelAndUnmuteIfNeeded(reason: "app termination")
     await atmosBoost.cancelDeactivationAndWaitForTransition()
     if let client = activeClient {
